@@ -89,7 +89,12 @@ impl App {
             return;
         }
         if command == Command::Quit {
-            self.confirm = Some(Confirm::Quit);
+            // 开始界面没有进行中的游戏，直接退出
+            if self.title {
+                self.quit = true;
+            } else {
+                self.confirm = Some(Confirm::Quit);
+            }
             return;
         }
         if self.title {
@@ -324,12 +329,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn quit_asks_first_everywhere() {
-        let mut title = App::new(1);
+    fn quit_from_title_is_immediate() {
+        let mut app = App::new(1);
+        app.handle(Command::Quit);
+        assert_eq!(app.confirming(), None);
+        assert!(app.should_quit());
+    }
+
+    #[test]
+    fn quit_asks_first_once_playing() {
         let mut game = playing(1);
         let mut over = playing(1);
         play_until_over(&mut over);
-        for app in [&mut title, &mut game, &mut over] {
+        for app in [&mut game, &mut over] {
             app.handle(Command::Quit);
             assert_eq!(app.confirming(), Some(Confirm::Quit));
             app.handle(Command::Answer(false));

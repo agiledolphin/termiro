@@ -142,10 +142,8 @@ fn confirm_lines(confirm: Confirm) -> [Line<'static>; 4] {
     .map(Line::centered)
 }
 
-/// 开始界面：标志加上开始、退出的按键提示；确认退出时提示换成确认问题。
-/// 终端不够宽时换成小号标志。
+/// 开始界面：标志加上开始、退出的按键提示。终端不够宽时换成小号标志。
 fn draw_title(frame: &mut Frame, area: Rect, app: &App, keys: &Keymap, theme: &Theme) {
-    let confirm = app.confirming();
     let big = area.width >= logo::WIDTH;
     let logo_height = if big { logo::HEIGHT } else { 1 };
     let hints = [
@@ -158,13 +156,9 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App, keys: &Keymap, theme: &T
             what.dim(),
         ])
     });
-    let text_height = match confirm {
-        Some(_) => 4,
-        None => hints.len() as u16,
-    };
     let best = app.best_score();
 
-    let block = centered(area, area.width, logo_height + 4 + text_height);
+    let block = centered(area, area.width, logo_height + 4 + hints.len() as u16);
     let [logo_area, _, best_area, _, text_area] = Layout::vertical([
         Constraint::Length(logo_height),
         Constraint::Length(1),
@@ -183,19 +177,12 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App, keys: &Keymap, theme: &T
         let line = Line::from(format!("BEST {best}").dim()).centered();
         frame.render_widget(line, best_area);
     }
-    match confirm {
-        Some(confirm) => {
-            frame.render_widget(Paragraph::new(confirm_lines(confirm).to_vec()), text_area)
-        }
-        None => {
-            // 提示文字左对齐成一列，整体居中
-            let width = hints.iter().map(Line::width).max().unwrap_or(0) as u16;
-            frame.render_widget(
-                Paragraph::new(hints.to_vec()),
-                centered(text_area, width, text_area.height),
-            );
-        }
-    }
+    // 提示文字左对齐成一列，整体居中
+    let width = hints.iter().map(Line::width).max().unwrap_or(0) as u16;
+    frame.render_widget(
+        Paragraph::new(hints.to_vec()),
+        centered(text_area, width, text_area.height),
+    );
 }
 
 /// 按键提示，过长时截断以免挤乱布局。
@@ -366,13 +353,6 @@ mod tests {
         let mut app = started(7);
         app.handle(Command::Restart);
         assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
-    }
-
-    #[test]
-    fn confirm_quit_on_title() {
-        let mut app = App::new(7);
-        app.handle(Command::Quit);
-        assert_snapshot!(render(&app, 80, 24));
     }
 
     #[test]
