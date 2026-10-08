@@ -177,3 +177,7 @@ crates/
   ```
 
 - **CI**：每次推送都会在 macOS、Linux、Windows 上运行格式检查、clippy 和全部测试。
+
+## 许可证
+
+[MIT](LICENSE)

@@ -4,6 +4,7 @@ description = "Termino 终端俄罗斯方块"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "termino"
