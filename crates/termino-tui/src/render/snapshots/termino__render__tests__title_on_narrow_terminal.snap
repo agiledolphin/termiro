@@ -1,0 +1,17 @@
+---
+source: crates/termino-tui/src/render/mod.rs
+expression: "render(&App::new(7), MIN_WIDTH, MIN_HEIGHT)"
+---
+                                                    
+                                                    
+                                                    
+                                                    
+                                                    
+                                                    
+                                                    
+                                                    
+                   T E R M I N O                    
+                                                    
+                                                    
+                    Space  start                    
+                    Q Esc  quit

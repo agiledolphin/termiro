@@ -3,6 +3,7 @@
 //! 界面文字只用 ASCII：方向箭头、`·` 等字符在东亚语言环境下可能被当作双宽字符，导致错位。
 
 mod board;
+mod logo;
 mod panel;
 
 use ratatui::Frame;
@@ -38,6 +39,11 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         draw_too_small(frame, area);
+        return;
+    }
+
+    if app.on_title() {
+        draw_title(frame, area, input.keymap());
         return;
     }
 
@@ -98,6 +104,41 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
     }
 }
 
+/// 开始界面：标志加上开始、退出的按键提示。终端不够宽时换成小号标志。
+fn draw_title(frame: &mut Frame, area: Rect, keys: &Keymap) {
+    let big = area.width >= logo::WIDTH;
+    let logo_height = if big { logo::HEIGHT } else { 1 };
+    let hints = [
+        (Command::Game(Action::HardDrop), "start"),
+        (Command::Quit, "quit"),
+    ]
+    .map(|(command, what)| {
+        Line::from(vec![
+            format!("{:<7}", key_label(keys, command)).bold(),
+            what.dim(),
+        ])
+    });
+    let hint_width = hints.iter().map(Line::width).max().unwrap_or(0) as u16;
+
+    let block = centered(area, area.width, logo_height + 2 + hints.len() as u16);
+    let [logo_area, _, hint_area] = Layout::vertical([
+        Constraint::Length(logo_height),
+        Constraint::Length(2),
+        Constraint::Min(0),
+    ])
+    .areas(block);
+    if big {
+        frame.render_widget(logo::Logo, centered(logo_area, logo::WIDTH, logo::HEIGHT));
+    } else {
+        frame.render_widget(logo::small().centered(), logo_area);
+    }
+    // 提示文字左对齐成一列，整体居中
+    frame.render_widget(
+        Paragraph::new(hints.to_vec()),
+        centered(hint_area, hint_width, hint_area.height),
+    );
+}
+
 /// 按键提示，过长时截断以免挤乱布局。
 fn key_label(keys: &Keymap, command: Command) -> String {
     keys.label(command).chars().take(6).collect()
@@ -151,6 +192,7 @@ mod tests {
     use termino_core::PieceKind;
 
     use super::*;
+    use crate::app::tests::playing as started;
     use crate::config::Timing;
 
     /// 把画面转成文本。纯文本快照看不到背景色，所以有背景色的格子
@@ -191,7 +233,7 @@ mod tests {
 
     #[test]
     fn playing() {
-        let mut app = App::new(7);
+        let mut app = started(7);
         press(&mut app, &[Action::HardDrop]);
         press(&mut app, &[Action::Hold]);
         assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
@@ -199,14 +241,14 @@ mod tests {
 
     #[test]
     fn paused() {
-        let mut app = App::new(7);
+        let mut app = started(7);
         app.handle(Command::Pause);
         assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
     }
 
     #[test]
     fn game_over() {
-        let mut app = App::new(7);
+        let mut app = started(7);
         while app.view().game_over.is_none() {
             press(&mut app, &[Action::HardDrop]);
         }
@@ -214,7 +256,17 @@ mod tests {
     }
 
     #[test]
+    fn title() {
+        assert_snapshot!(render(&App::new(7), 80, 24));
+    }
+
+    #[test]
+    fn title_on_narrow_terminal() {
+        assert_snapshot!(render(&App::new(7), MIN_WIDTH, MIN_HEIGHT));
+    }
+
+    #[test]
     fn terminal_too_small() {
-        assert_snapshot!(render(&App::new(7), 30, 10));
+        assert_snapshot!(render(&started(7), 30, 10));
     }
 }
