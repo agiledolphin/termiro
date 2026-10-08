@@ -35,6 +35,9 @@ pub const WIDTH: u16 = {
     (cells - GAP) * CELL_WIDTH
 };
 
+/// 小号标志 `T E R M I N O` 的宽度。
+pub const SMALL_WIDTH: u16 = NAME.len() as u16 * 2 - 1;
+
 /// 大号标志，需要 [`WIDTH`]×[`HEIGHT`] 的区域。
 pub struct Logo<'a> {
     pub theme: &'a Theme,

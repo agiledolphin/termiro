@@ -33,6 +33,10 @@ impl Theme {
         Self { depth, ascii }
     }
 
+    pub fn depth(&self) -> ColorDepth {
+        self.depth
+    }
+
     /// 方块颜色；无颜色模式下为 `None`。
     pub fn color(&self, kind: PieceKind) -> Option<Color> {
         use PieceKind::*;

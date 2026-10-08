@@ -129,6 +129,21 @@ impl Input {
         }
     }
 
+    /// 彩蛋播放时的按键处理：按任意键关闭。
+    pub fn dismiss_key(&mut self, key: KeyEvent) -> Option<Command> {
+        self.release_all();
+        if key.kind != KeyEventKind::Press {
+            return None;
+        }
+        let ctrl_c =
+            key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+        Some(if ctrl_c {
+            Command::ForceQuit
+        } else {
+            Command::Dismiss
+        })
+    }
+
     /// 推进 `dt`，返回长按连发产生的动作。
     pub fn tick(&mut self, dt: Duration) -> Vec<Action> {
         let mut actions = Vec::new();
@@ -341,6 +356,23 @@ mod tests {
         );
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(input.confirm_key(ctrl_c), Some(Command::ForceQuit));
+    }
+
+    #[test]
+    fn any_key_dismisses() {
+        let mut input = native(100, 50, 33);
+        for code in [KeyCode::Esc, KeyCode::Char('q'), KeyCode::Char('?')] {
+            assert_eq!(
+                input.dismiss_key(event(code, KeyEventKind::Press)),
+                Some(Command::Dismiss)
+            );
+        }
+        assert_eq!(
+            input.dismiss_key(event(KeyCode::Esc, KeyEventKind::Release)),
+            None
+        );
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(input.dismiss_key(ctrl_c), Some(Command::ForceQuit));
     }
 
     #[test]

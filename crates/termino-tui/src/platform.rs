@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{
-    DisableFocusChange, EnableFocusChange, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::supports_keyboard_enhancement;
@@ -43,6 +43,8 @@ pub fn init() -> io::Result<(DefaultTerminal, Capabilities)> {
     }
     // 不支持焦点事件的终端会忽略这条指令
     execute!(stdout(), EnableFocusChange)?;
+    // 用于在开始界面点击标志打开彩蛋。开启后终端里拖选文字一般需要按住 Shift 或 Option
+    execute!(stdout(), EnableMouseCapture)?;
 
     Ok((
         terminal,
@@ -58,7 +60,7 @@ pub fn restore() {
     if KEYBOARD_ENHANCED.swap(false, Ordering::SeqCst) {
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     }
-    let _ = execute!(stdout(), DisableFocusChange);
+    let _ = execute!(stdout(), DisableFocusChange, DisableMouseCapture);
     ratatui::restore();
 }
 

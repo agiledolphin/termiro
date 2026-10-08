@@ -3,12 +3,15 @@
 //! 界面文字只用 ASCII：方向箭头、`·` 等字符在东亚语言环境下可能被当作双宽字符，导致错位。
 
 mod board;
+mod cake;
 mod logo;
 mod panel;
 mod theme;
 
+use std::time::Duration;
+
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
@@ -40,11 +43,15 @@ const HELP: [(Command, &str); 10] = [
 
 pub fn draw(frame: &mut Frame, app: &App, input: &Input, theme: &Theme) {
     let area = frame.area();
-    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+    if too_small(area) {
         draw_too_small(frame, area);
         return;
     }
 
+    if let Some(elapsed) = app.cake() {
+        draw_cake(frame, area, elapsed, theme);
+        return;
+    }
     if app.on_title() {
         draw_title(frame, area, app, input.keymap(), theme);
         return;
@@ -142,24 +149,25 @@ fn confirm_lines(confirm: Confirm) -> [Line<'static>; 4] {
     .map(Line::centered)
 }
 
-/// 开始界面：标志加上开始、退出的按键提示。终端不够宽时换成小号标志。
-fn draw_title(frame: &mut Frame, area: Rect, app: &App, keys: &Keymap, theme: &Theme) {
+/// 开始界面各部分的位置。绘制和鼠标点击判断共用这一份计算。
+struct TitleLayout {
+    /// 标志实际占据的区域：大号是像素字，小号是一行彩色文字。
+    logo: Rect,
+    big: bool,
+    best: Rect,
+    hints: Rect,
+}
+
+const TITLE_HINTS: [(Command, &str); 2] = [
+    (Command::Game(Action::HardDrop), "start"),
+    (Command::Quit, "quit"),
+];
+
+fn title_layout(area: Rect) -> TitleLayout {
     let big = area.width >= logo::WIDTH;
     let logo_height = if big { logo::HEIGHT } else { 1 };
-    let hints = [
-        (Command::Game(Action::HardDrop), "start"),
-        (Command::Quit, "quit"),
-    ]
-    .map(|(command, what)| {
-        Line::from(vec![
-            format!("{:<7}", key_label(keys, command)).bold(),
-            what.dim(),
-        ])
-    });
-    let best = app.best_score();
-
-    let block = centered(area, area.width, logo_height + 4 + hints.len() as u16);
-    let [logo_area, _, best_area, _, text_area] = Layout::vertical([
+    let block = centered(area, area.width, logo_height + 4 + TITLE_HINTS.len() as u16);
+    let [logo_row, _, best, _, hints] = Layout::vertical([
         Constraint::Length(logo_height),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -167,22 +175,66 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App, keys: &Keymap, theme: &T
         Constraint::Min(0),
     ])
     .areas(block);
-    if big {
-        let logo = logo::Logo { theme };
-        frame.render_widget(logo, centered(logo_area, logo::WIDTH, logo::HEIGHT));
+    let logo = if big {
+        centered(logo_row, logo::WIDTH, logo::HEIGHT)
     } else {
-        frame.render_widget(logo::small(theme).centered(), logo_area);
+        centered(logo_row, logo::SMALL_WIDTH, 1)
+    };
+    TitleLayout {
+        logo,
+        big,
+        best,
+        hints,
     }
+}
+
+/// 鼠标点击的位置是否落在开始界面的标志上。
+pub fn logo_hit(area: Rect, column: u16, row: u16) -> bool {
+    !too_small(area) && title_layout(area).logo.contains(Position::new(column, row))
+}
+
+/// 开始界面：标志加上开始、退出的按键提示。终端不够宽时换成小号标志。
+fn draw_title(frame: &mut Frame, area: Rect, app: &App, keys: &Keymap, theme: &Theme) {
+    let layout = title_layout(area);
+    if layout.big {
+        frame.render_widget(logo::Logo { theme }, layout.logo);
+    } else {
+        frame.render_widget(logo::small(theme), layout.logo);
+    }
+    let best = app.best_score();
     if best > 0 {
         let line = Line::from(format!("BEST {best}").dim()).centered();
-        frame.render_widget(line, best_area);
+        frame.render_widget(line, layout.best);
     }
     // 提示文字左对齐成一列，整体居中
+    let hints = TITLE_HINTS.map(|(command, what)| {
+        Line::from(vec![
+            format!("{:<7}", key_label(keys, command)).bold(),
+            what.dim(),
+        ])
+    });
     let width = hints.iter().map(Line::width).max().unwrap_or(0) as u16;
     frame.render_widget(
         Paragraph::new(hints.to_vec()),
-        centered(text_area, width, text_area.height),
+        centered(layout.hints, width, layout.hints.height),
     );
+}
+
+/// 彩蛋：生日蛋糕、彩虹色的祝福，以及关闭提示。
+fn draw_cake(frame: &mut Frame, area: Rect, elapsed: Duration, theme: &Theme) {
+    let n = cake::frame_at(elapsed);
+    let block = centered(area, cake::WIDTH, cake::HEIGHT + 4);
+    let [art, _, greeting, _, hint] = Layout::vertical([
+        Constraint::Length(cake::HEIGHT),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(block);
+    frame.render_widget(cake::Cake { frame: n, theme }, art);
+    frame.render_widget(cake::greeting(n, theme).centered(), greeting);
+    frame.render_widget(Line::from("press any key".dim()).centered(), hint);
 }
 
 /// 按键提示，过长时截断以免挤乱布局。
@@ -201,6 +253,10 @@ fn draw_overlay<'a>(
     let area = centered(board_area, board::WIDTH - 2, lines.len() as u16 + 2);
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(theme.bordered()), area);
+}
+
+fn too_small(area: Rect) -> bool {
+    area.width < MIN_WIDTH || area.height < MIN_HEIGHT
 }
 
 fn draw_too_small(frame: &mut Frame, area: Rect) {
@@ -229,8 +285,6 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use insta::assert_snapshot;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -353,6 +407,33 @@ mod tests {
         let mut app = started(7);
         app.handle(Command::Restart);
         assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
+    }
+
+    #[test]
+    fn logo_click_area() {
+        let area = Rect::new(0, 0, 80, 24);
+        let logo = title_layout(area).logo;
+        assert_eq!((logo.width, logo.height), (logo::WIDTH, logo::HEIGHT));
+        assert!(logo_hit(area, logo.x, logo.y));
+        assert!(logo_hit(area, logo.right() - 1, logo.bottom() - 1));
+        assert!(!logo_hit(area, logo.x, logo.bottom()));
+        assert!(!logo_hit(area, 0, 0));
+
+        // 窄终端上是一行小号标志
+        let narrow = Rect::new(0, 0, MIN_WIDTH, MIN_HEIGHT);
+        let small = title_layout(narrow).logo;
+        assert_eq!((small.width, small.height), (logo::SMALL_WIDTH, 1));
+        assert!(logo_hit(narrow, small.x + 6, small.y));
+
+        // 终端太小时不显示标志
+        assert!(!logo_hit(Rect::new(0, 0, 30, 10), 15, 5));
+    }
+
+    #[test]
+    fn birthday_cake() {
+        let mut app = App::new(7);
+        app.handle(Command::EasterEgg);
+        assert_snapshot!(render_with(&app, 80, 24, &PLAIN));
     }
 
     #[test]

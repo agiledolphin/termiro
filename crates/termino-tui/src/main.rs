@@ -13,7 +13,8 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self, Event, MouseButton, MouseEventKind};
+use ratatui::layout::Rect;
 
 use crate::app::App;
 use crate::config::{ColorSetting, Config};
@@ -106,13 +107,26 @@ fn run(mut terminal: DefaultTerminal, mut input: Input, theme: &Theme) -> io::Re
             loop {
                 match event::read()? {
                     Event::Key(key) => {
-                        let command = if app.confirming().is_some() {
+                        let command = if app.cake().is_some() {
+                            input.dismiss_key(key)
+                        } else if app.confirming().is_some() {
                             input.confirm_key(key)
                         } else {
                             input.key(key)
                         };
                         if let Some(command) = command {
                             app.handle(command);
+                        }
+                    }
+                    Event::Mouse(mouse)
+                        if mouse.kind == MouseEventKind::Down(MouseButton::Left) =>
+                    {
+                        let size = terminal.size()?;
+                        let area = Rect::new(0, 0, size.width, size.height);
+                        if app.cake().is_some() {
+                            app.handle(Command::Dismiss);
+                        } else if render::logo_hit(area, mouse.column, mouse.row) {
+                            app.handle(Command::EasterEgg);
                         }
                     }
                     // 失去焦点后可能收不到按键释放，松开所有键并暂停

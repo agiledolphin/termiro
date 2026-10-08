@@ -25,6 +25,8 @@ pub struct App {
     paused: bool,
     /// 正在等待玩家确认的操作；期间游戏不计时。
     confirm: Option<Confirm>,
+    /// 彩蛋动画已经播放的时间；`None` 表示没有在播放。
+    cake: Option<Duration>,
     quit: bool,
     /// 自上一帧以来收到的动作，在下一个逻辑帧统一交给 core。
     pending: Vec<Action>,
@@ -50,6 +52,7 @@ impl App {
             title: true,
             paused: false,
             confirm: None,
+            cake: None,
             quit: false,
             pending: Vec::new(),
             banner: None,
@@ -71,6 +74,12 @@ impl App {
         if command == Command::ForceQuit {
             self.finish();
             self.quit = true;
+            return;
+        }
+        if self.cake.is_some() {
+            if command == Command::Dismiss {
+                self.cake = None;
+            }
             return;
         }
         if let Some(confirm) = self.confirm {
@@ -98,9 +107,11 @@ impl App {
             return;
         }
         if self.title {
-            // 这次按键只用来开始，不会把第一个方块砸下去
-            if command == Command::Game(Action::HardDrop) {
-                self.title = false;
+            match command {
+                // 这次按键只用来开始，不会把第一个方块砸下去
+                Command::Game(Action::HardDrop) => self.title = false,
+                Command::EasterEgg => self.cake = Some(Duration::ZERO),
+                _ => {}
             }
             return;
         }
@@ -151,6 +162,10 @@ impl App {
     }
 
     pub fn tick(&mut self, dt: Duration) {
+        if let Some(elapsed) = &mut self.cake {
+            *elapsed += dt;
+            return;
+        }
         if self.title || self.paused || self.confirm.is_some() {
             return;
         }
@@ -202,6 +217,11 @@ impl App {
 
     pub fn save_failed(&self) -> bool {
         self.save_failed
+    }
+
+    /// 彩蛋动画已经播放的时间。
+    pub fn cake(&self) -> Option<Duration> {
+        self.cake
     }
 
     pub fn on_title(&self) -> bool {
@@ -263,6 +283,38 @@ pub(crate) mod tests {
         app.tick(Duration::ZERO);
         assert!(!app.on_title());
         assert_eq!(app.view().board.filled_count(), 0);
+    }
+
+    #[test]
+    fn easter_egg_plays_on_title_until_dismissed() {
+        let mut app = App::new(1);
+        app.handle(Command::EasterEgg);
+        app.tick(SECOND);
+        assert_eq!(app.cake(), Some(SECOND));
+        // 播放期间其它命令无效
+        app.handle(Command::Game(Action::HardDrop));
+        app.handle(Command::Quit);
+        assert!(app.on_title());
+        assert!(!app.should_quit());
+
+        app.handle(Command::Dismiss);
+        assert_eq!(app.cake(), None);
+        assert!(app.on_title());
+    }
+
+    #[test]
+    fn easter_egg_only_on_title() {
+        let mut app = playing(1);
+        app.handle(Command::EasterEgg);
+        assert_eq!(app.cake(), None);
+    }
+
+    #[test]
+    fn force_quit_during_easter_egg() {
+        let mut app = App::new(1);
+        app.handle(Command::EasterEgg);
+        app.handle(Command::ForceQuit);
+        assert!(app.should_quit());
     }
 
     #[test]

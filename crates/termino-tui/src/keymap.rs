@@ -16,6 +16,10 @@ pub enum Command {
     ForceQuit,
     /// 回答确认框：`true` 为确认。
     Answer(bool),
+    /// 打开彩蛋（在开始界面点击标志）。
+    EasterEgg,
+    /// 关闭彩蛋。
+    Dismiss,
 }
 
 #[derive(Clone, Debug)]
