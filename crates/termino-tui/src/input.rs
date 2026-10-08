@@ -1,47 +1,172 @@
-//! 按键到命令的映射。
+//! 把按键事件变成命令，并在能收到按键释放事件时自己实现长按连发（DAS/ARR）。
 //!
-//! M2 采用降级方案：每个按下或重复事件对应一次动作，长按依赖系统的键盘重复速率。
-//! M4 接入 kitty 键盘协议后再自己实现 DAS/ARR。
+//! 两种模式：
+//! - 完整模式：终端支持 kitty 键盘协议，或在 Windows 上。能知道键何时松开，
+//!   左右移动和软降的连发由这里按配置的时间控制，旋转等按键不会连发。
+//! - 降级模式：收不到释放事件，每个按下或重复事件对应一次命令，连发速度取决于系统设置。
+
+use std::time::Duration;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use termino_core::Action;
+use termino_core::{Action, HEIGHT, WIDTH};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Command {
-    Game(Action),
-    Pause,
-    Restart,
-    Quit,
+use crate::config::Timing;
+use crate::keymap::{Command, Keymap, normalize};
+
+pub struct Input {
+    keymap: Keymap,
+    das: Duration,
+    arr: Duration,
+    soft_drop: Duration,
+    /// 能否收到按键释放事件。
+    key_release: bool,
+    /// 按住的左右方向键，最后按下的在末尾、优先生效。
+    horizontal: Vec<(KeyCode, Action)>,
+    shift: Repeater,
+    /// 按住的软降键。
+    soft_drop_keys: Vec<KeyCode>,
+    drop: Repeater,
 }
 
-pub fn map_key(key: KeyEvent) -> Option<Command> {
-    // Windows 上 crossterm 会同时上报按下和释放，只处理按下和重复
-    if key.kind == KeyEventKind::Release {
-        return None;
+/// 长按连发计时：先等 `delay`，之后每隔 `interval` 触发一次。
+#[derive(Default)]
+struct Repeater {
+    elapsed: Duration,
+    charged: bool,
+}
+
+impl Repeater {
+    /// 推进 `dt`，返回这段时间内应触发的次数。`interval` 为 0 时一次触发 `instant` 次。
+    fn advance(
+        &mut self,
+        dt: Duration,
+        delay: Duration,
+        interval: Duration,
+        instant: usize,
+    ) -> usize {
+        self.elapsed += dt;
+        let mut count = 0;
+        if !self.charged {
+            if self.elapsed < delay {
+                return 0;
+            }
+            self.elapsed -= delay;
+            self.charged = true;
+            count = 1;
+        }
+        if interval.is_zero() {
+            self.elapsed = Duration::ZERO;
+            return instant;
+        }
+        while self.elapsed >= interval {
+            self.elapsed -= interval;
+            count += 1;
+        }
+        count
     }
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
-        return (key.code == KeyCode::Char('c')).then_some(Command::Quit);
+}
+
+impl Input {
+    pub fn new(keymap: Keymap, timing: &Timing, key_release: bool) -> Self {
+        Self {
+            keymap,
+            das: timing.das(),
+            arr: timing.arr(),
+            soft_drop: timing.soft_drop(),
+            key_release,
+            horizontal: Vec::new(),
+            shift: Repeater::default(),
+            soft_drop_keys: Vec::new(),
+            drop: Repeater::default(),
+        }
     }
 
-    let command = match key.code {
-        KeyCode::Left => Command::Game(Action::MoveLeft),
-        KeyCode::Right => Command::Game(Action::MoveRight),
-        KeyCode::Down => Command::Game(Action::SoftDrop),
-        KeyCode::Up => Command::Game(Action::RotateCw),
-        KeyCode::Esc => Command::Quit,
-        KeyCode::Char(c) => match c.to_ascii_lowercase() {
-            ' ' => Command::Game(Action::HardDrop),
-            'x' => Command::Game(Action::RotateCw),
-            'z' => Command::Game(Action::RotateCcw),
-            'c' => Command::Game(Action::Hold),
-            'p' => Command::Pause,
-            'r' => Command::Restart,
-            'q' => Command::Quit,
-            _ => return None,
-        },
-        _ => return None,
-    };
-    Some(command)
+    pub fn keymap(&self) -> &Keymap {
+        &self.keymap
+    }
+
+    /// 是否由本模块控制长按连发。
+    pub fn has_auto_repeat(&self) -> bool {
+        self.key_release
+    }
+
+    /// 处理一个按键事件，返回需要立即执行的命令。
+    pub fn key(&mut self, key: KeyEvent) -> Option<Command> {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            let ctrl_c = key.code == KeyCode::Char('c') && key.kind != KeyEventKind::Release;
+            return ctrl_c.then_some(Command::Quit);
+        }
+        let command = self.keymap.get(key.code)?;
+        if !self.key_release {
+            return (key.kind != KeyEventKind::Release).then_some(command);
+        }
+        let code = normalize(key.code);
+        match key.kind {
+            KeyEventKind::Press => self.press(code, command),
+            KeyEventKind::Release => {
+                self.release(code);
+                None
+            }
+            // 连发由自己控制，忽略终端的重复事件
+            KeyEventKind::Repeat => None,
+        }
+    }
+
+    /// 推进 `dt`，返回长按连发产生的动作。
+    pub fn tick(&mut self, dt: Duration) -> Vec<Action> {
+        let mut actions = Vec::new();
+        if let Some(&(_, direction)) = self.horizontal.last() {
+            let count = self.shift.advance(dt, self.das, self.arr, WIDTH as usize);
+            actions.extend(std::iter::repeat_n(direction, count));
+        }
+        if !self.soft_drop_keys.is_empty() {
+            let count = self
+                .drop
+                .advance(dt, self.soft_drop, self.soft_drop, HEIGHT as usize);
+            actions.extend(std::iter::repeat_n(Action::SoftDrop, count));
+        }
+        actions
+    }
+
+    /// 松开所有按键。终端失去焦点时调用，因为之后的释放事件可能收不到。
+    pub fn release_all(&mut self) {
+        self.horizontal.clear();
+        self.soft_drop_keys.clear();
+    }
+
+    fn press(&mut self, code: KeyCode, command: Command) -> Option<Command> {
+        match command {
+            Command::Game(direction @ (Action::MoveLeft | Action::MoveRight)) => {
+                // Windows 会把按住时的重复上报为按下，这里去重
+                if self.horizontal.iter().any(|&(c, _)| c == code) {
+                    return None;
+                }
+                self.horizontal.push((code, direction));
+                self.shift = Repeater::default();
+            }
+            Command::Game(Action::SoftDrop) => {
+                if self.soft_drop_keys.contains(&code) {
+                    return None;
+                }
+                if self.soft_drop_keys.is_empty() {
+                    self.drop = Repeater::default();
+                }
+                self.soft_drop_keys.push(code);
+            }
+            _ => {}
+        }
+        Some(command)
+    }
+
+    fn release(&mut self, code: KeyCode) {
+        let was_active = self.horizontal.last().is_some_and(|&(c, _)| c == code);
+        self.horizontal.retain(|&(c, _)| c != code);
+        // 松开后面按的方向键时，回到仍按着的那个方向，重新等待 DAS
+        if was_active {
+            self.shift = Repeater::default();
+        }
+        self.soft_drop_keys.retain(|&c| c != code);
+    }
 }
 
 #[cfg(test)]
@@ -49,46 +174,135 @@ mod tests {
     use super::*;
     use ratatui::crossterm::event::KeyEventState;
 
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
+    const LEFT: Command = Command::Game(Action::MoveLeft);
+    const RIGHT: Command = Command::Game(Action::MoveRight);
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
     }
 
-    #[test]
-    fn maps_game_keys() {
-        assert_eq!(
-            map_key(key(KeyCode::Left)),
-            Some(Command::Game(Action::MoveLeft))
-        );
-        assert_eq!(
-            map_key(key(KeyCode::Char(' '))),
-            Some(Command::Game(Action::HardDrop))
-        );
-        assert_eq!(
-            map_key(key(KeyCode::Char('Z'))),
-            Some(Command::Game(Action::RotateCcw))
-        );
-        assert_eq!(
-            map_key(key(KeyCode::Char('c'))),
-            Some(Command::Game(Action::Hold))
-        );
-        assert_eq!(map_key(key(KeyCode::Char('?'))), None);
-    }
-
-    #[test]
-    fn ignores_key_release() {
-        let release = KeyEvent {
-            code: KeyCode::Left,
+    fn event(code: KeyCode, kind: KeyEventKind) -> KeyEvent {
+        KeyEvent {
+            code,
             modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Release,
+            kind,
             state: KeyEventState::NONE,
+        }
+    }
+
+    fn press(input: &mut Input, code: KeyCode) -> Option<Command> {
+        input.key(event(code, KeyEventKind::Press))
+    }
+
+    fn release(input: &mut Input, code: KeyCode) {
+        assert_eq!(input.key(event(code, KeyEventKind::Release)), None);
+    }
+
+    fn native(das: u64, arr: u64, soft_drop: u64) -> Input {
+        let timing = Timing {
+            das_ms: das,
+            arr_ms: arr,
+            soft_drop_ms: soft_drop,
         };
-        assert_eq!(map_key(release), None);
+        Input::new(Keymap::default(), &timing, true)
+    }
+
+    fn fallback() -> Input {
+        Input::new(Keymap::default(), &Timing::default(), false)
     }
 
     #[test]
-    fn ctrl_c_quits_but_other_ctrl_keys_do_nothing() {
+    fn das_then_arr() {
+        let mut input = native(167, 33, 33);
+        assert_eq!(press(&mut input, KeyCode::Left), Some(LEFT));
+        assert!(input.tick(ms(166)).is_empty());
+        assert_eq!(input.tick(ms(1)), [Action::MoveLeft]);
+        assert!(input.tick(ms(32)).is_empty());
+        assert_eq!(input.tick(ms(1)), [Action::MoveLeft]);
+        assert_eq!(input.tick(ms(66)), [Action::MoveLeft; 2]);
+
+        release(&mut input, KeyCode::Left);
+        assert!(input.tick(ms(1000)).is_empty());
+    }
+
+    #[test]
+    fn zero_arr_moves_to_the_wall() {
+        let mut input = native(100, 0, 33);
+        press(&mut input, KeyCode::Right);
+        assert_eq!(input.tick(ms(100)).len(), WIDTH as usize);
+    }
+
+    #[test]
+    fn last_pressed_direction_wins() {
+        let mut input = native(100, 50, 33);
+        press(&mut input, KeyCode::Left);
+        input.tick(ms(150));
+        // 按住左的同时按右：立即右移，并重新计算 DAS
+        assert_eq!(press(&mut input, KeyCode::Right), Some(RIGHT));
+        assert!(input.tick(ms(99)).is_empty());
+        assert_eq!(input.tick(ms(1)), [Action::MoveRight]);
+
+        // 松开右：回到左，不立即移动，重新等待 DAS
+        release(&mut input, KeyCode::Right);
+        assert!(input.tick(ms(99)).is_empty());
+        assert_eq!(input.tick(ms(1)), [Action::MoveLeft]);
+    }
+
+    #[test]
+    fn duplicate_press_is_ignored() {
+        let mut input = native(100, 50, 33);
+        press(&mut input, KeyCode::Left);
+        input.tick(ms(90));
+        assert_eq!(press(&mut input, KeyCode::Left), None);
+        assert_eq!(input.tick(ms(10)), [Action::MoveLeft]);
+    }
+
+    #[test]
+    fn soft_drop_repeats_while_held() {
+        let mut input = native(167, 33, 20);
+        assert_eq!(
+            press(&mut input, KeyCode::Down),
+            Some(Command::Game(Action::SoftDrop))
+        );
+        assert!(input.tick(ms(19)).is_empty());
+        assert_eq!(input.tick(ms(21)), [Action::SoftDrop; 2]);
+        release(&mut input, KeyCode::Down);
+        assert!(input.tick(ms(100)).is_empty());
+    }
+
+    #[test]
+    fn terminal_repeats_are_ignored_when_releases_are_known() {
+        let mut input = native(167, 33, 33);
+        assert_eq!(
+            press(&mut input, KeyCode::Up),
+            Some(Command::Game(Action::RotateCw))
+        );
+        assert_eq!(input.key(event(KeyCode::Up, KeyEventKind::Repeat)), None);
+    }
+
+    #[test]
+    fn release_all_stops_repeating() {
+        let mut input = native(100, 50, 33);
+        press(&mut input, KeyCode::Left);
+        press(&mut input, KeyCode::Down);
+        input.release_all();
+        assert!(input.tick(ms(1000)).is_empty());
+    }
+
+    #[test]
+    fn fallback_maps_every_press_and_never_repeats() {
+        let mut input = fallback();
+        assert_eq!(press(&mut input, KeyCode::Left), Some(LEFT));
+        assert_eq!(press(&mut input, KeyCode::Left), Some(LEFT));
+        assert_eq!(input.key(event(KeyCode::Left, KeyEventKind::Release)), None);
+        assert!(input.tick(ms(1000)).is_empty());
+    }
+
+    #[test]
+    fn ctrl_c_always_quits() {
+        let mut input = native(167, 33, 33);
         let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
-        assert_eq!(map_key(ctrl('c')), Some(Command::Quit));
-        assert_eq!(map_key(ctrl('z')), None);
+        assert_eq!(input.key(ctrl('c')), Some(Command::Quit));
+        assert_eq!(input.key(ctrl('z')), None);
     }
 }

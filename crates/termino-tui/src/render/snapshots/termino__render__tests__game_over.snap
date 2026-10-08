@@ -15,7 +15,7 @@ LINES 0        ││                  ││ │            │
                ││     SCORE 226    ││ │  IIIIIIII  │
                ││                  ││ │            │
                ││    R  restart    ││ │            │
-               ││      Q  quit     ││ │     SSSS   │
+               ││    Q Esc  quit   ││ │     SSSS   │
                │└──────────────────┘│ │   SSSS     │
                │ . . .LLLLLL . . . .│ └────────────┘
                │ . . . .OOOO . . . .│               

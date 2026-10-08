@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use termino_core::{Action, Clear, Event, Game, GameView, Rules};
 
-use crate::input::Command;
+use crate::keymap::Command;
 
 /// 消行提示的显示时长。
 const BANNER_TIME: Duration = Duration::from_secs(2);
@@ -40,6 +40,13 @@ impl App {
             Command::Restart if self.paused || over => *self = Self::new(self.seed.wrapping_add(1)),
             Command::Game(action) if !self.paused && !over => self.pending.push(action),
             _ => {}
+        }
+    }
+
+    /// 暂停游戏；已暂停或已结束时无效果。
+    pub fn pause(&mut self) {
+        if self.game.view().game_over.is_none() {
+            self.paused = true;
         }
     }
 
@@ -138,6 +145,19 @@ mod tests {
         assert!(!app.paused());
         app.handle(Command::Restart);
         assert!(app.view().game_over.is_none());
+    }
+
+    #[test]
+    fn pause_does_not_toggle() {
+        let mut app = App::new(1);
+        app.pause();
+        app.pause();
+        assert!(app.paused());
+
+        let mut over = App::new(1);
+        play_until_over(&mut over);
+        over.pause();
+        assert!(!over.paused());
     }
 
     #[test]

@@ -12,25 +12,29 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use self::board::BoardWidget;
+use termino_core::Action;
+
 use crate::app::App;
+use crate::input::Input;
+use crate::keymap::{Command, Keymap};
 
 const MIN_WIDTH: u16 = panel::WIDTH + 1 + board::WIDTH + 1 + panel::WIDTH;
 const MIN_HEIGHT: u16 = board::HEIGHT;
 
-const HELP: [(&str, &str); 10] = [
-    ("Left", "move left"),
-    ("Right", "move right"),
-    ("Down", "soft drop"),
-    ("Space", "hard drop"),
-    ("Up X", "rotate"),
-    ("Z", "rotate ccw"),
-    ("C", "hold"),
-    ("P", "resume"),
-    ("R", "restart"),
-    ("Q", "quit"),
+const HELP: [(Command, &str); 10] = [
+    (Command::Game(Action::MoveLeft), "move left"),
+    (Command::Game(Action::MoveRight), "move right"),
+    (Command::Game(Action::SoftDrop), "soft drop"),
+    (Command::Game(Action::HardDrop), "hard drop"),
+    (Command::Game(Action::RotateCw), "rotate"),
+    (Command::Game(Action::RotateCcw), "rotate ccw"),
+    (Command::Game(Action::Hold), "hold"),
+    (Command::Pause, "resume"),
+    (Command::Restart, "restart"),
+    (Command::Quit, "quit"),
 ];
 
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         draw_too_small(frame, area);
@@ -59,12 +63,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
     .areas(right);
 
     let view = app.view();
+    let keys = input.keymap();
     let buf = frame.buffer_mut();
     panel::hold(&view, hold_area, buf);
     panel::next(&view, next_area, buf);
     frame.render_widget(BoardWidget::new(&view), board_area);
     frame.render_widget(panel::stats(&view, app.banner()), stats_area);
-    frame.render_widget(Line::from("P  pause/help".dim()), hint_area);
+    let hint = format!("{}  pause/help", key_label(keys, Command::Pause));
+    frame.render_widget(Line::from(hint.dim()), hint_area);
 
     if view.game_over.is_some() {
         let lines = vec![
@@ -72,18 +78,29 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Line::from(""),
             Line::from(format!("SCORE {}", view.score)),
             Line::from(""),
-            Line::from("R  restart".dim()),
-            Line::from("Q  quit".dim()),
+            Line::from(format!("{}  restart", key_label(keys, Command::Restart)).dim()),
+            Line::from(format!("{}  quit", key_label(keys, Command::Quit)).dim()),
         ];
         draw_overlay(frame, board_area, lines.into_iter().map(Line::centered));
     } else if app.paused() {
         let mut lines = vec![Line::from("PAUSED".bold()).centered(), Line::from("")];
-        lines.extend(
-            HELP.iter()
-                .map(|(key, what)| Line::from(vec![format!(" {key:<7}").bold(), what.dim()])),
-        );
+        lines.extend(HELP.iter().map(|&(command, what)| {
+            Line::from(vec![
+                format!(" {:<7}", key_label(keys, command)).bold(),
+                what.dim(),
+            ])
+        }));
+        // 告诉玩家长按连发由谁控制：终端不支持时只能用系统的按键重复
+        let repeat = if input.has_auto_repeat() { "DAS" } else { "OS" };
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(" auto-repeat: {repeat}").dim()));
         draw_overlay(frame, board_area, lines);
     }
+}
+
+/// 按键提示，过长时截断以免挤乱布局。
+fn key_label(keys: &Keymap, command: Command) -> String {
+    keys.label(command).chars().take(6).collect()
 }
 
 /// 盖在盘面中央的提示框，宽度与盘面内部一致。
@@ -131,16 +148,17 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::style::Color;
-    use termino_core::{Action, PieceKind};
+    use termino_core::PieceKind;
 
     use super::*;
-    use crate::input::Command;
+    use crate::config::Timing;
 
     /// 把画面转成文本。纯文本快照看不到背景色，所以有背景色的格子
     /// 换成对应方块的字母（灰色为 `#`），其余格子保留原字符。
     fn render(app: &App, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| draw(frame, app)).unwrap();
+        let input = Input::new(Keymap::default(), &Timing::default(), true);
+        terminal.draw(|frame| draw(frame, app, &input)).unwrap();
         to_text(terminal.backend().buffer())
     }
 

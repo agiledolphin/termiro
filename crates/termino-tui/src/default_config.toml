@@ -1,0 +1,26 @@
+# Termino configuration.
+# Every field is optional; anything left out uses the value shown here.
+
+[timing]
+# How long a direction key must be held before it starts repeating (DAS).
+das_ms = 167
+# Interval between repeated moves once repeating (ARR). 0 = jump to the wall.
+arr_ms = 33
+# Interval between rows while soft drop is held. 0 = drop to the floor.
+soft_drop_ms = 33
+
+# Each action takes a list of keys.
+# Key names: Left, Right, Up, Down, Space, Enter, Tab, Backspace, Esc,
+# or any single character (letters are case-insensitive).
+# Ctrl-C always quits.
+[keys]
+move_left = ["Left"]
+move_right = ["Right"]
+soft_drop = ["Down"]
+hard_drop = ["Space"]
+rotate_cw = ["Up", "x"]
+rotate_ccw = ["z"]
+hold = ["c"]
+pause = ["p"]
+restart = ["r"]
+quit = ["q", "Esc"]

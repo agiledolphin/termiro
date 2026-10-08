@@ -10,8 +10,11 @@ name = "termino"
 path = "src/main.rs"
 
 [dependencies]
+directories = "6.0.0"
 ratatui = "0.29.0"
+serde = { version = "1.0.229", features = ["derive"] }
 termino-core.workspace = true
+toml = "1.1.7"
 
 [dev-dependencies]
 insta = "1.49.0"

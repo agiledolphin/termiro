@@ -5,22 +5,22 @@ expression: "render(&app, MIN_WIDTH, MIN_HEIGHT)"
 ┌ HOLD ──────┐ ┌───── TERMINO ──────┐ ┌ NEXT ──────┐
 │            │ │ . . .SSSS . . . . .│ │   JJ       │
 │            │ │ . . . . . . . . . .│ │   JJJJJJ   │
-└────────────┘ │ . . . . . . . . . .│ │            │
-               │┌──────────────────┐│ │    OOOO    │
-SCORE          ││      PAUSED      ││ │    OOOO    │
-0              ││                  ││ │            │
-               ││ Left   move left ││ │       LL   │
-LEVEL 1        ││ Right  move right││ │   LLLLLL   │
-LINES 0        ││ Down   soft drop ││ │            │
-               ││ Space  hard drop ││ │   ZZZZ     │
-               ││ Up X   rotate    ││ │     ZZZZ   │
-               ││ Z      rotate ccw││ │            │
-               ││ C      hold      ││ │  IIIIIIII  │
-               ││ P      resume    ││ │            │
-               ││ R      restart   ││ └────────────┘
-               ││ Q      quit      ││               
+└────────────┘ │┌──────────────────┐│ │            │
+               ││      PAUSED      ││ │    OOOO    │
+SCORE          ││                  ││ │    OOOO    │
+0              ││ Left   move left ││ │            │
+               ││ Right  move right││ │       LL   │
+LEVEL 1        ││ Down   soft drop ││ │   LLLLLL   │
+LINES 0        ││ Space  hard drop ││ │            │
+               ││ Up X   rotate    ││ │   ZZZZ     │
+               ││ Z      rotate ccw││ │     ZZZZ   │
+               ││ C      hold      ││ │            │
+               ││ P      resume    ││ │  IIIIIIII  │
+               ││ R      restart   ││ │            │
+               ││ Q Esc  quit      ││ └────────────┘
+               ││                  ││               
+               ││ auto-repeat: DAS ││               
                │└──────────────────┘│               
-               │ . . . . . . . . . .│               
                │ . . . .[][] . . . .│               
                │ . . .[][] . . . . .│               
 P  pause/help  └────────────────────┘
