@@ -15,7 +15,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use self::board::BoardWidget;
 use termino_core::Action;
 
-use crate::app::App;
+use crate::app::{App, Confirm};
 use crate::input::Input;
 use crate::keymap::{Command, Keymap};
 
@@ -43,7 +43,7 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
     }
 
     if app.on_title() {
-        draw_title(frame, area, input.keymap());
+        draw_title(frame, area, input.keymap(), app.confirming());
         return;
     }
 
@@ -78,7 +78,9 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
     let hint = format!("{}  pause/help", key_label(keys, Command::Pause));
     frame.render_widget(Line::from(hint.dim()), hint_area);
 
-    if view.game_over.is_some() {
+    if let Some(confirm) = app.confirming() {
+        draw_confirm(frame, board_area, confirm);
+    } else if view.game_over.is_some() {
         let lines = vec![
             Line::from("GAME OVER".bold()),
             Line::from(""),
@@ -104,8 +106,28 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
     }
 }
 
-/// 开始界面：标志加上开始、退出的按键提示。终端不够宽时换成小号标志。
-fn draw_title(frame: &mut Frame, area: Rect, keys: &Keymap) {
+/// 确认框。确认键固定为 Y/Enter 和 N/Esc，不受按键配置影响。
+fn draw_confirm(frame: &mut Frame, area: Rect, confirm: Confirm) {
+    draw_overlay(frame, area, confirm_lines(confirm));
+}
+
+fn confirm_lines(confirm: Confirm) -> [Line<'static>; 4] {
+    let question = match confirm {
+        Confirm::Quit => "QUIT?",
+        Confirm::Restart => "RESTART?",
+    };
+    [
+        Line::from(question.bold()),
+        Line::from(""),
+        Line::from(vec!["Y Enter  ".bold(), "yes".dim()]),
+        Line::from(vec!["N Esc    ".bold(), "no ".dim()]),
+    ]
+    .map(Line::centered)
+}
+
+/// 开始界面：标志加上开始、退出的按键提示；确认退出时提示换成确认问题。
+/// 终端不够宽时换成小号标志。
+fn draw_title(frame: &mut Frame, area: Rect, keys: &Keymap, confirm: Option<Confirm>) {
     let big = area.width >= logo::WIDTH;
     let logo_height = if big { logo::HEIGHT } else { 1 };
     let hints = [
@@ -118,10 +140,13 @@ fn draw_title(frame: &mut Frame, area: Rect, keys: &Keymap) {
             what.dim(),
         ])
     });
-    let hint_width = hints.iter().map(Line::width).max().unwrap_or(0) as u16;
+    let text_height = match confirm {
+        Some(_) => 4,
+        None => hints.len() as u16,
+    };
 
-    let block = centered(area, area.width, logo_height + 2 + hints.len() as u16);
-    let [logo_area, _, hint_area] = Layout::vertical([
+    let block = centered(area, area.width, logo_height + 2 + text_height);
+    let [logo_area, _, text_area] = Layout::vertical([
         Constraint::Length(logo_height),
         Constraint::Length(2),
         Constraint::Min(0),
@@ -132,11 +157,19 @@ fn draw_title(frame: &mut Frame, area: Rect, keys: &Keymap) {
     } else {
         frame.render_widget(logo::small().centered(), logo_area);
     }
-    // 提示文字左对齐成一列，整体居中
-    frame.render_widget(
-        Paragraph::new(hints.to_vec()),
-        centered(hint_area, hint_width, hint_area.height),
-    );
+    match confirm {
+        Some(confirm) => {
+            frame.render_widget(Paragraph::new(confirm_lines(confirm).to_vec()), text_area)
+        }
+        None => {
+            // 提示文字左对齐成一列，整体居中
+            let width = hints.iter().map(Line::width).max().unwrap_or(0) as u16;
+            frame.render_widget(
+                Paragraph::new(hints.to_vec()),
+                centered(text_area, width, text_area.height),
+            );
+        }
+    }
 }
 
 /// 按键提示，过长时截断以免挤乱布局。
@@ -253,6 +286,20 @@ mod tests {
             press(&mut app, &[Action::HardDrop]);
         }
         assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
+    }
+
+    #[test]
+    fn confirm_restart() {
+        let mut app = started(7);
+        app.handle(Command::Restart);
+        assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
+    }
+
+    #[test]
+    fn confirm_quit_on_title() {
+        let mut app = App::new(7);
+        app.handle(Command::Quit);
+        assert_snapshot!(render(&app, 80, 24));
     }
 
     #[test]

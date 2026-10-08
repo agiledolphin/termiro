@@ -94,7 +94,12 @@ fn run(mut terminal: DefaultTerminal, mut input: Input) -> io::Result<()> {
             loop {
                 match event::read()? {
                     Event::Key(key) => {
-                        if let Some(command) = input.key(key) {
+                        let command = if app.confirming().is_some() {
+                            input.confirm_key(key)
+                        } else {
+                            input.key(key)
+                        };
+                        if let Some(command) = command {
                             app.handle(command);
                         }
                     }

@@ -94,7 +94,7 @@ impl Input {
     pub fn key(&mut self, key: KeyEvent) -> Option<Command> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             let ctrl_c = key.code == KeyCode::Char('c') && key.kind != KeyEventKind::Release;
-            return ctrl_c.then_some(Command::Quit);
+            return ctrl_c.then_some(Command::ForceQuit);
         }
         let command = self.keymap.get(key.code)?;
         if !self.key_release {
@@ -109,6 +109,23 @@ impl Input {
             }
             // 连发由自己控制，忽略终端的重复事件
             KeyEventKind::Repeat => None,
+        }
+    }
+
+    /// 确认框打开时的按键处理：Y/Enter 确认，N/Esc 取消，不经过按键配置。
+    /// 同时松开所有按键，避免确认框期间漏掉的释放事件让方向键卡住。
+    pub fn confirm_key(&mut self, key: KeyEvent) -> Option<Command> {
+        self.release_all();
+        if key.kind != KeyEventKind::Press {
+            return None;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return (key.code == KeyCode::Char('c')).then_some(Command::ForceQuit);
+        }
+        match normalize(key.code) {
+            KeyCode::Char('y') | KeyCode::Enter => Some(Command::Answer(true)),
+            KeyCode::Char('n') | KeyCode::Esc => Some(Command::Answer(false)),
+            _ => None,
         }
     }
 
@@ -299,10 +316,46 @@ mod tests {
     }
 
     #[test]
+    fn confirm_keys() {
+        let mut input = native(100, 50, 33);
+        assert_eq!(
+            input.confirm_key(event(KeyCode::Char('Y'), KeyEventKind::Press)),
+            Some(Command::Answer(true))
+        );
+        assert_eq!(
+            input.confirm_key(event(KeyCode::Enter, KeyEventKind::Press)),
+            Some(Command::Answer(true))
+        );
+        assert_eq!(
+            input.confirm_key(event(KeyCode::Esc, KeyEventKind::Press)),
+            Some(Command::Answer(false))
+        );
+        // 打开确认框的那个键松开或连发时不应当被当作回答
+        assert_eq!(
+            input.confirm_key(event(KeyCode::Esc, KeyEventKind::Release)),
+            None
+        );
+        assert_eq!(
+            input.confirm_key(event(KeyCode::Char('q'), KeyEventKind::Press)),
+            None
+        );
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(input.confirm_key(ctrl_c), Some(Command::ForceQuit));
+    }
+
+    #[test]
+    fn confirm_dialog_releases_held_keys() {
+        let mut input = native(100, 50, 33);
+        press(&mut input, KeyCode::Left);
+        input.confirm_key(event(KeyCode::Char('n'), KeyEventKind::Press));
+        assert!(input.tick(ms(1000)).is_empty());
+    }
+
+    #[test]
     fn ctrl_c_always_quits() {
         let mut input = native(167, 33, 33);
         let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
-        assert_eq!(input.key(ctrl('c')), Some(Command::Quit));
+        assert_eq!(input.key(ctrl('c')), Some(Command::ForceQuit));
         assert_eq!(input.key(ctrl('z')), None);
     }
 }

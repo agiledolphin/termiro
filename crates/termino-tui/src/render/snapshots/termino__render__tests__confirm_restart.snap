@@ -1,0 +1,26 @@
+---
+source: crates/termino-tui/src/render/mod.rs
+expression: "render(&app, MIN_WIDTH, MIN_HEIGHT)"
+---
+┌ HOLD ──────┐ ┌───── TERMINO ──────┐ ┌ NEXT ──────┐
+│            │ │ . . .SSSS . . . . .│ │   JJ       │
+│            │ │ . . . . . . . . . .│ │   JJJJJJ   │
+└────────────┘ │ . . . . . . . . . .│ │            │
+               │ . . . . . . . . . .│ │    OOOO    │
+SCORE          │ . . . . . . . . . .│ │    OOOO    │
+0              │ . . . . . . . . . .│ │            │
+               │ . . . . . . . . . .│ │       LL   │
+LEVEL 1        │┌──────────────────┐│ │   LLLLLL   │
+LINES 0        ││     RESTART?     ││ │            │
+               ││                  ││ │   ZZZZ     │
+               ││   Y Enter  yes   ││ │     ZZZZ   │
+               ││   N Esc    no    ││ │            │
+               │└──────────────────┘│ │  IIIIIIII  │
+               │ . . . . . . . . . .│ │            │
+               │ . . . . . . . . . .│ └────────────┘
+               │ . . . . . . . . . .│               
+               │ . . . . . . . . . .│               
+               │ . . . . . . . . . .│               
+               │ . . . .[][] . . . .│               
+               │ . . .[][] . . . . .│               
+P  pause/help  └────────────────────┘

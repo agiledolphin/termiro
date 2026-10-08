@@ -10,7 +10,12 @@ pub enum Command {
     Game(Action),
     Pause,
     Restart,
+    /// 退出，需要确认。
     Quit,
+    /// Ctrl-C：立即退出，不确认。
+    ForceQuit,
+    /// 回答确认框：`true` 为确认。
+    Answer(bool),
 }
 
 #[derive(Clone, Debug)]
