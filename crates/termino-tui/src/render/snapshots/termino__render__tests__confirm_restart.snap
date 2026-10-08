@@ -9,11 +9,11 @@ expression: "render(&app, MIN_WIDTH, MIN_HEIGHT)"
                │ . . . . . . . . . .│ │    OOOO    │
 SCORE          │ . . . . . . . . . .│ │    OOOO    │
 0              │ . . . . . . . . . .│ │            │
-               │ . . . . . . . . . .│ │       LL   │
-LEVEL 1        │┌──────────────────┐│ │   LLLLLL   │
-LINES 0        ││     RESTART?     ││ │            │
-               ││                  ││ │   ZZZZ     │
-               ││   Y Enter  yes   ││ │     ZZZZ   │
+BEST           │ . . . . . . . . . .│ │       LL   │
+0              │┌──────────────────┐│ │   LLLLLL   │
+               ││     RESTART?     ││ │            │
+LEVEL 1        ││                  ││ │   ZZZZ     │
+LINES 0        ││   Y Enter  yes   ││ │     ZZZZ   │
                ││   N Esc    no    ││ │            │
                │└──────────────────┘│ │  IIIIIIII  │
                │ . . . . . . . . . .│ │            │

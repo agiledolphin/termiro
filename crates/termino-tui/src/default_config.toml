@@ -24,3 +24,12 @@ hold = ["c"]
 pause = ["p"]
 restart = ["r"]
 quit = ["q", "Esc"]
+
+[display]
+# Color support: auto, truecolor, 256, 16 or none.
+# auto looks at the NO_COLOR, COLORTERM and TERM environment variables.
+# With none, blocks are drawn as [] instead of colored cells.
+color = "auto"
+# Draw borders with plain ASCII (+ - |). Turn this on if borders look broken,
+# e.g. when the terminal treats box-drawing characters as double width.
+ascii = false

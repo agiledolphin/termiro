@@ -7,7 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use termino_core::PieceKind;
 
-use super::board::{CELL_WIDTH, block_style, color};
+use super::board::CELL_WIDTH;
+use super::theme::Theme;
 
 /// 5 行高的像素字，`#` 是一个格子。
 const LETTERS: [(PieceKind, [&str; 5]); 7] = [
@@ -35,17 +36,20 @@ pub const WIDTH: u16 = {
 };
 
 /// 大号标志，需要 [`WIDTH`]×[`HEIGHT`] 的区域。
-pub struct Logo;
+pub struct Logo<'a> {
+    pub theme: &'a Theme,
+}
 
-impl Widget for Logo {
+impl Widget for Logo<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut x = area.x;
         for (kind, rows) in LETTERS {
+            let (symbol, style) = self.theme.block(kind);
             for (dy, row) in rows.iter().enumerate() {
                 for (dx, pixel) in row.chars().enumerate() {
                     let (px, py) = (x + dx as u16 * CELL_WIDTH, area.y + dy as u16);
                     if pixel == '#' && px < area.right() && py < area.bottom() {
-                        buf.set_stringn(px, py, "  ", CELL_WIDTH as usize, block_style(kind));
+                        buf.set_stringn(px, py, symbol, CELL_WIDTH as usize, style);
                     }
                 }
             }
@@ -55,13 +59,16 @@ impl Widget for Logo {
 }
 
 /// 窄终端用的小号标志：`T E R M I N O`，每个字母一种颜色。
-pub fn small() -> Line<'static> {
+pub fn small(theme: &Theme) -> Line<'static> {
     let mut spans = Vec::new();
     for (i, (letter, (kind, _))) in NAME.chars().zip(LETTERS).enumerate() {
         if i > 0 {
             spans.push(Span::raw(" "));
         }
-        let style = Style::new().fg(color(kind)).bold();
+        let style = theme
+            .color(kind)
+            .map_or(Style::new(), |c| Style::new().fg(c))
+            .bold();
         spans.push(Span::styled(letter.to_string(), style));
     }
     Line::from(spans)

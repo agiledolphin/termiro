@@ -10,9 +10,9 @@ expression: "render(&app, MIN_WIDTH, MIN_HEIGHT)"
 SCORE          │ . . . . .LL . . . .│ │   SSSS     │
 226            │┌──────────────────┐│ │            │
 BEST           ││     GAME OVER    ││ │    OOOO    │
-100000         ││                  ││ │    OOOO    │
+226            ││                  ││ │    OOOO    │
                ││     SCORE 226    ││ │            │
-LEVEL 1        ││    BEST 100000   ││ │  IIIIIIII  │
+LEVEL 1        ││    NEW RECORD!   ││ │  IIIIIIII  │
 LINES 0        ││                  ││ │            │
                ││    R  restart    ││ │            │
                ││    Q Esc  quit   ││ │     SSSS   │

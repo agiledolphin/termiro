@@ -15,6 +15,29 @@ pub const DEFAULT_TOML: &str = include_str!("default_config.toml");
 pub struct Config {
     pub timing: Timing,
     pub keys: Keys,
+    pub display: Display,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Display {
+    pub color: ColorSetting,
+    /// 只用 ASCII 字符画边框。
+    pub ascii: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorSetting {
+    /// 根据 NO_COLOR、COLORTERM、TERM 环境变量判断。
+    #[default]
+    Auto,
+    Truecolor,
+    #[serde(rename = "256")]
+    Ansi256,
+    #[serde(rename = "16")]
+    Ansi16,
+    None,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -130,6 +153,14 @@ mod tests {
         assert_eq!(config.timing.das_ms, 167);
         assert_eq!(config.keys.hold, ["Shift", "c"]);
         assert_eq!(config.keys.quit, Keys::default().quit);
+    }
+
+    #[test]
+    fn parses_display_settings() {
+        let config = Config::parse("[display]\ncolor = \"256\"\nascii = true").unwrap();
+        assert_eq!(config.display.color, ColorSetting::Ansi256);
+        assert!(config.display.ascii);
+        assert!(Config::parse("[display]\ncolor = \"rainbow\"").is_err());
     }
 
     #[test]

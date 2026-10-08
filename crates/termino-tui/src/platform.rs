@@ -61,3 +61,79 @@ pub fn restore() {
     let _ = execute!(stdout(), DisableFocusChange);
     ratatui::restore();
 }
+
+/// 终端能显示的颜色数量。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorDepth {
+    TrueColor,
+    Ansi256,
+    Ansi16,
+    None,
+}
+
+/// 根据环境变量推断颜色能力。
+pub fn detect_color_depth() -> ColorDepth {
+    color_depth_from(|name| std::env::var(name).ok())
+}
+
+fn color_depth_from(env: impl Fn(&str) -> Option<String>) -> ColorDepth {
+    // https://no-color.org：设置了非空的 NO_COLOR 就不输出颜色
+    if env("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        return ColorDepth::None;
+    }
+    let colorterm = env("COLORTERM").unwrap_or_default().to_ascii_lowercase();
+    if colorterm == "truecolor" || colorterm == "24bit" {
+        return ColorDepth::TrueColor;
+    }
+    let term = env("TERM").unwrap_or_default();
+    if term == "dumb" {
+        return ColorDepth::None;
+    }
+    // Windows Terminal 支持真彩色，但不设置 COLORTERM
+    if env("WT_SESSION").is_some() {
+        return ColorDepth::TrueColor;
+    }
+    // macOS 自带的终端是 xterm-256color，不支持真彩色
+    if term.contains("256color") {
+        return ColorDepth::Ansi256;
+    }
+    ColorDepth::Ansi16
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn depth(vars: &[(&str, &str)]) -> ColorDepth {
+        color_depth_from(|name| {
+            vars.iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.to_string())
+        })
+    }
+
+    #[test]
+    fn detects_color_depth_from_environment() {
+        assert_eq!(
+            depth(&[("COLORTERM", "truecolor"), ("TERM", "xterm-256color")]),
+            ColorDepth::TrueColor
+        );
+        assert_eq!(depth(&[("TERM", "xterm-256color")]), ColorDepth::Ansi256);
+        assert_eq!(depth(&[("TERM", "xterm")]), ColorDepth::Ansi16);
+        assert_eq!(depth(&[]), ColorDepth::Ansi16);
+        assert_eq!(depth(&[("WT_SESSION", "abc")]), ColorDepth::TrueColor);
+        assert_eq!(depth(&[("TERM", "dumb")]), ColorDepth::None);
+    }
+
+    #[test]
+    fn no_color_wins_unless_empty() {
+        assert_eq!(
+            depth(&[("NO_COLOR", "1"), ("COLORTERM", "truecolor")]),
+            ColorDepth::None
+        );
+        assert_eq!(
+            depth(&[("NO_COLOR", ""), ("TERM", "xterm-256color")]),
+            ColorDepth::Ansi256
+        );
+    }
+}

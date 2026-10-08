@@ -9,11 +9,11 @@ expression: "render(&app, MIN_WIDTH, MIN_HEIGHT)"
                ││      PAUSED      ││ │    OOOO    │
 SCORE          ││                  ││ │    OOOO    │
 0              ││ Left   move left ││ │            │
-               ││ Right  move right││ │       LL   │
-LEVEL 1        ││ Down   soft drop ││ │   LLLLLL   │
-LINES 0        ││ Space  hard drop ││ │            │
-               ││ Up X   rotate    ││ │   ZZZZ     │
-               ││ Z      rotate ccw││ │     ZZZZ   │
+BEST           ││ Right  move right││ │       LL   │
+0              ││ Down   soft drop ││ │   LLLLLL   │
+               ││ Space  hard drop ││ │            │
+LEVEL 1        ││ Up X   rotate    ││ │   ZZZZ     │
+LINES 0        ││ Z      rotate ccw││ │     ZZZZ   │
                ││ C      hold      ││ │            │
                ││ P      resume    ││ │  IIIIIIII  │
                ││ R      restart   ││ │            │

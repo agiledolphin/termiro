@@ -6,6 +6,7 @@ mod input;
 mod keymap;
 mod platform;
 mod render;
+mod storage;
 
 use std::io;
 use std::process::ExitCode;
@@ -15,9 +16,11 @@ use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event};
 
 use crate::app::App;
-use crate::config::Config;
+use crate::config::{ColorSetting, Config};
 use crate::input::Input;
 use crate::keymap::{Command, Keymap};
+use crate::platform::ColorDepth;
+use crate::render::Theme;
 
 /// 逻辑帧率固定为 60Hz，与终端刷新速度无关。
 const TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
@@ -66,9 +69,18 @@ fn main() -> ExitCode {
         Err(e) => return fail(&format!("invalid config: {e}")),
     };
 
+    let depth = match config.display.color {
+        ColorSetting::Auto => platform::detect_color_depth(),
+        ColorSetting::Truecolor => ColorDepth::TrueColor,
+        ColorSetting::Ansi256 => ColorDepth::Ansi256,
+        ColorSetting::Ansi16 => ColorDepth::Ansi16,
+        ColorSetting::None => ColorDepth::None,
+    };
+    let theme = Theme::new(depth, config.display.ascii);
+
     let result = platform::init().and_then(|(terminal, caps)| {
         let input = Input::new(keymap, &config.timing, caps.key_release);
-        run(terminal, input)
+        run(terminal, input, &theme)
     });
     platform::restore();
     match result {
@@ -82,12 +94,12 @@ fn fail(message: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-fn run(mut terminal: DefaultTerminal, mut input: Input) -> io::Result<()> {
-    let mut app = App::new(seed_from_clock());
+fn run(mut terminal: DefaultTerminal, mut input: Input, theme: &Theme) -> io::Result<()> {
+    let mut app = App::new(seed_from_clock()).with_best(storage::load());
     let mut next_tick = Instant::now() + TICK;
 
     while !app.should_quit() {
-        terminal.draw(|frame| render::draw(frame, &app, &input))?;
+        terminal.draw(|frame| render::draw(frame, &app, &input, theme))?;
 
         let timeout = next_tick.saturating_duration_since(Instant::now());
         if event::poll(timeout)? {
@@ -127,8 +139,19 @@ fn run(mut terminal: DefaultTerminal, mut input: Input) -> io::Result<()> {
             app.tick(TICK);
             next_tick += TICK;
         }
+        save_record(&mut app);
     }
+    // 退出时放弃的那一局也可能破了纪录
+    save_record(&mut app);
     Ok(())
+}
+
+fn save_record(app: &mut App) {
+    if let Some(record) = app.take_unsaved() {
+        if storage::save(&record).is_err() {
+            app.set_save_failed();
+        }
+    }
 }
 
 fn seed_from_clock() -> u64 {

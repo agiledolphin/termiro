@@ -3,6 +3,7 @@ use std::time::Duration;
 use termino_core::{Action, Clear, Event, Game, GameView, Rules};
 
 use crate::keymap::Command;
+use crate::storage::Record;
 
 /// 需要玩家确认的操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +30,15 @@ pub struct App {
     pending: Vec<Action>,
     /// 最近一次消行或 T-Spin，以及剩余显示时间。
     banner: Option<(Clear, Duration)>,
+    /// 历史最高纪录，包括本次运行中刚创下的。
+    best: Option<Record>,
+    /// 本局已经计入纪录，避免结束后再退出或重开时重复计入。
+    recorded: bool,
+    /// 本局打破了纪录。
+    new_record: bool,
+    /// 还没写入磁盘的新纪录，由主循环取走保存。
+    unsaved: Option<Record>,
+    save_failed: bool,
 }
 
 impl App {
@@ -43,11 +53,23 @@ impl App {
             quit: false,
             pending: Vec::new(),
             banner: None,
+            best: None,
+            recorded: false,
+            new_record: false,
+            unsaved: None,
+            save_failed: false,
         }
+    }
+
+    /// 设置启动时读到的历史最高纪录。
+    pub fn with_best(mut self, best: Option<Record>) -> Self {
+        self.best = best;
+        self
     }
 
     pub fn handle(&mut self, command: Command) {
         if command == Command::ForceQuit {
+            self.finish();
             self.quit = true;
             return;
         }
@@ -56,7 +78,10 @@ impl App {
                 self.confirm = None;
                 if yes {
                     match confirm {
-                        Confirm::Quit => self.quit = true,
+                        Confirm::Quit => {
+                            self.finish();
+                            self.quit = true;
+                        }
                         Confirm::Restart => self.restart(),
                     }
                 }
@@ -85,10 +110,32 @@ impl App {
         }
     }
 
-    /// 开始新的一局，不回开始界面。
+    /// 开始新的一局，不回开始界面。被放弃的这一局分数照样计入纪录。
     fn restart(&mut self) {
-        *self = Self::new(self.seed.wrapping_add(1));
+        self.finish();
+        let unsaved = self.unsaved.take();
+        *self = Self::new(self.seed.wrapping_add(1)).with_best(self.best);
+        self.unsaved = unsaved;
         self.title = false;
+    }
+
+    /// 一局结束（游戏结束、重开或退出）时调用：分数超过纪录就记下来，等待保存。
+    fn finish(&mut self) {
+        if self.title || self.recorded {
+            return;
+        }
+        self.recorded = true;
+        let view = self.game.view();
+        let record = Record {
+            score: view.score,
+            lines: view.lines,
+            level: view.level,
+        };
+        if record.score > 0 && self.best.is_none_or(|best| record.score > best.score) {
+            self.best = Some(record);
+            self.new_record = true;
+            self.unsaved = Some(record);
+        }
     }
 
     /// 暂停游戏；在开始界面、已暂停或已结束时无效果。
@@ -109,8 +156,10 @@ impl App {
             }
         }
         for event in self.game.update(dt, &self.pending) {
-            if let Event::Clear(clear) = event {
-                self.banner = Some((clear, BANNER_TIME));
+            match event {
+                Event::Clear(clear) => self.banner = Some((clear, BANNER_TIME)),
+                Event::GameOver(_) => self.finish(),
+                Event::Locked(_) => {}
             }
         }
         self.pending.clear();
@@ -122,6 +171,32 @@ impl App {
 
     pub fn banner(&self) -> Option<Clear> {
         self.banner.map(|(clear, _)| clear)
+    }
+
+    /// 显示用的最高分：历史纪录和当前分数取大者。
+    pub fn best_score(&self) -> u64 {
+        let current = if self.title {
+            0
+        } else {
+            self.game.view().score
+        };
+        self.best.map_or(0, |best| best.score).max(current)
+    }
+
+    pub fn new_record(&self) -> bool {
+        self.new_record
+    }
+
+    pub fn take_unsaved(&mut self) -> Option<Record> {
+        self.unsaved.take()
+    }
+
+    pub fn set_save_failed(&mut self) {
+        self.save_failed = true;
+    }
+
+    pub fn save_failed(&self) -> bool {
+        self.save_failed
     }
 
     pub fn on_title(&self) -> bool {
@@ -293,6 +368,60 @@ pub(crate) mod tests {
         app.handle(Command::Restart);
         app.handle(Command::ForceQuit);
         assert!(app.should_quit());
+    }
+
+    #[test]
+    fn game_over_sets_new_record_once() {
+        let mut app = playing(1).with_best(Some(Record {
+            score: 1,
+            lines: 0,
+            level: 1,
+        }));
+        play_until_over(&mut app);
+        let score = app.view().score;
+        assert!(app.new_record());
+        assert_eq!(app.best_score(), score);
+        assert_eq!(app.take_unsaved().map(|r| r.score), Some(score));
+        // 结束后再退出不会重复计入
+        app.handle(Command::Quit);
+        app.handle(Command::Answer(true));
+        assert_eq!(app.take_unsaved(), None);
+    }
+
+    #[test]
+    fn lower_score_is_not_a_record() {
+        let best = Record {
+            score: u64::MAX,
+            lines: 0,
+            level: 1,
+        };
+        let mut app = playing(1).with_best(Some(best));
+        play_until_over(&mut app);
+        assert!(!app.new_record());
+        assert_eq!(app.take_unsaved(), None);
+        assert_eq!(app.best_score(), u64::MAX);
+    }
+
+    #[test]
+    fn abandoned_game_still_counts() {
+        let mut app = playing(1);
+        app.handle(Command::Game(Action::HardDrop));
+        app.tick(Duration::ZERO);
+        let score = app.view().score;
+        assert!(score > 0);
+
+        app.handle(Command::Restart);
+        app.handle(Command::Answer(true));
+        assert!(!app.new_record(), "新的一局还没有破纪录");
+        assert_eq!(app.best_score(), score);
+        assert_eq!(app.take_unsaved().map(|r| r.score), Some(score));
+    }
+
+    #[test]
+    fn quitting_from_title_records_nothing() {
+        let mut app = App::new(1);
+        app.handle(Command::ForceQuit);
+        assert_eq!(app.take_unsaved(), None);
     }
 
     #[test]

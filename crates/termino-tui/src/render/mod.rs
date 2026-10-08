@@ -5,15 +5,18 @@
 mod board;
 mod logo;
 mod panel;
+mod theme;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Stylize;
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::style::{Color, Stylize};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, Paragraph};
+
+use termino_core::Action;
 
 use self::board::BoardWidget;
-use termino_core::Action;
+pub use self::theme::Theme;
 
 use crate::app::{App, Confirm};
 use crate::input::Input;
@@ -35,7 +38,7 @@ const HELP: [(Command, &str); 10] = [
     (Command::Quit, "quit"),
 ];
 
-pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
+pub fn draw(frame: &mut Frame, app: &App, input: &Input, theme: &Theme) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         draw_too_small(frame, area);
@@ -43,7 +46,7 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
     }
 
     if app.on_title() {
-        draw_title(frame, area, input.keymap(), app.confirming());
+        draw_title(frame, area, app, input.keymap(), theme);
         return;
     }
 
@@ -71,25 +74,43 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
     let view = app.view();
     let keys = input.keymap();
     let buf = frame.buffer_mut();
-    panel::hold(&view, hold_area, buf);
-    panel::next(&view, next_area, buf);
-    frame.render_widget(BoardWidget::new(&view), board_area);
-    frame.render_widget(panel::stats(&view, app.banner()), stats_area);
+    panel::hold(&view, theme, hold_area, buf);
+    panel::next(&view, theme, next_area, buf);
+    frame.render_widget(BoardWidget::new(&view, theme), board_area);
+    let stats = panel::stats(&view, app.best_score(), app.banner(), theme);
+    frame.render_widget(stats, stats_area);
     let hint = format!("{}  pause/help", key_label(keys, Command::Pause));
     frame.render_widget(Line::from(hint.dim()), hint_area);
 
     if let Some(confirm) = app.confirming() {
-        draw_confirm(frame, board_area, confirm);
+        draw_overlay(frame, board_area, confirm_lines(confirm), theme);
     } else if view.game_over.is_some() {
-        let lines = vec![
+        let mut lines = vec![
             Line::from("GAME OVER".bold()),
             Line::from(""),
             Line::from(format!("SCORE {}", view.score)),
+        ];
+        if app.new_record() {
+            lines.push(Line::from(
+                Span::styled("NEW RECORD!", theme.fg(Color::Yellow)).bold(),
+            ));
+        } else {
+            lines.push(Line::from(format!("BEST {}", app.best_score()).dim()));
+        }
+        if app.save_failed() {
+            lines.push(Line::from("(record not saved)".dim()));
+        }
+        lines.extend([
             Line::from(""),
             Line::from(format!("{}  restart", key_label(keys, Command::Restart)).dim()),
             Line::from(format!("{}  quit", key_label(keys, Command::Quit)).dim()),
-        ];
-        draw_overlay(frame, board_area, lines.into_iter().map(Line::centered));
+        ]);
+        draw_overlay(
+            frame,
+            board_area,
+            lines.into_iter().map(Line::centered),
+            theme,
+        );
     } else if app.paused() {
         let mut lines = vec![Line::from("PAUSED".bold()).centered(), Line::from("")];
         lines.extend(HELP.iter().map(|&(command, what)| {
@@ -102,15 +123,11 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input) {
         let repeat = if input.has_auto_repeat() { "DAS" } else { "OS" };
         lines.push(Line::from(""));
         lines.push(Line::from(format!(" auto-repeat: {repeat}").dim()));
-        draw_overlay(frame, board_area, lines);
+        draw_overlay(frame, board_area, lines, theme);
     }
 }
 
-/// 确认框。确认键固定为 Y/Enter 和 N/Esc，不受按键配置影响。
-fn draw_confirm(frame: &mut Frame, area: Rect, confirm: Confirm) {
-    draw_overlay(frame, area, confirm_lines(confirm));
-}
-
+/// 确认框的内容。确认键固定为 Y/Enter 和 N/Esc，不受按键配置影响。
 fn confirm_lines(confirm: Confirm) -> [Line<'static>; 4] {
     let question = match confirm {
         Confirm::Quit => "QUIT?",
@@ -127,7 +144,8 @@ fn confirm_lines(confirm: Confirm) -> [Line<'static>; 4] {
 
 /// 开始界面：标志加上开始、退出的按键提示；确认退出时提示换成确认问题。
 /// 终端不够宽时换成小号标志。
-fn draw_title(frame: &mut Frame, area: Rect, keys: &Keymap, confirm: Option<Confirm>) {
+fn draw_title(frame: &mut Frame, area: Rect, app: &App, keys: &Keymap, theme: &Theme) {
+    let confirm = app.confirming();
     let big = area.width >= logo::WIDTH;
     let logo_height = if big { logo::HEIGHT } else { 1 };
     let hints = [
@@ -144,18 +162,26 @@ fn draw_title(frame: &mut Frame, area: Rect, keys: &Keymap, confirm: Option<Conf
         Some(_) => 4,
         None => hints.len() as u16,
     };
+    let best = app.best_score();
 
-    let block = centered(area, area.width, logo_height + 2 + text_height);
-    let [logo_area, _, text_area] = Layout::vertical([
+    let block = centered(area, area.width, logo_height + 4 + text_height);
+    let [logo_area, _, best_area, _, text_area] = Layout::vertical([
         Constraint::Length(logo_height),
-        Constraint::Length(2),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
         Constraint::Min(0),
     ])
     .areas(block);
     if big {
-        frame.render_widget(logo::Logo, centered(logo_area, logo::WIDTH, logo::HEIGHT));
+        let logo = logo::Logo { theme };
+        frame.render_widget(logo, centered(logo_area, logo::WIDTH, logo::HEIGHT));
     } else {
-        frame.render_widget(logo::small().centered(), logo_area);
+        frame.render_widget(logo::small(theme).centered(), logo_area);
+    }
+    if best > 0 {
+        let line = Line::from(format!("BEST {best}").dim()).centered();
+        frame.render_widget(line, best_area);
     }
     match confirm {
         Some(confirm) => {
@@ -182,11 +208,12 @@ fn draw_overlay<'a>(
     frame: &mut Frame,
     board_area: Rect,
     lines: impl IntoIterator<Item = Line<'a>>,
+    theme: &Theme,
 ) {
     let lines: Vec<_> = lines.into_iter().collect();
     let area = centered(board_area, board::WIDTH - 2, lines.len() as u16 + 2);
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(Block::bordered()), area);
+    frame.render_widget(Paragraph::new(lines).block(theme.bordered()), area);
 }
 
 fn draw_too_small(frame: &mut Frame, area: Rect) {
@@ -221,32 +248,43 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
-    use ratatui::style::Color;
     use termino_core::PieceKind;
 
     use super::*;
     use crate::app::tests::playing as started;
     use crate::config::Timing;
+    use crate::platform::ColorDepth;
+    use crate::storage::Record;
+
+    const COLOR: Theme = Theme::new(ColorDepth::Ansi16, false);
+    const PLAIN: Theme = Theme::new(ColorDepth::None, true);
 
     /// 把画面转成文本。纯文本快照看不到背景色，所以有背景色的格子
     /// 换成对应方块的字母（灰色为 `#`），其余格子保留原字符。
     fn render(app: &App, width: u16, height: u16) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        let input = Input::new(Keymap::default(), &Timing::default(), true);
-        terminal.draw(|frame| draw(frame, app, &input)).unwrap();
-        to_text(terminal.backend().buffer())
+        render_with(app, width, height, &COLOR)
     }
 
-    fn to_text(buf: &Buffer) -> String {
+    fn render_with(app: &App, width: u16, height: u16, theme: &Theme) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let input = Input::new(Keymap::default(), &Timing::default(), true);
+        terminal
+            .draw(|frame| draw(frame, app, &input, theme))
+            .unwrap();
+        to_text(terminal.backend().buffer(), theme)
+    }
+
+    fn to_text(buf: &Buffer, theme: &Theme) -> String {
         let mut out = String::new();
         for y in 0..buf.area.height {
             for x in 0..buf.area.width {
                 let cell = &buf[(x, y)];
+                let colored = |(_, style): theme::Cell| style.bg.is_some_and(|bg| bg == cell.bg);
                 let letter = PieceKind::ALL
                     .into_iter()
-                    .find(|&k| board::color(k) == cell.bg)
+                    .find(|&k| colored(theme.block(k)))
                     .map(PieceKind::letter)
-                    .or((cell.bg == Color::DarkGray).then_some('#'));
+                    .or(colored(theme.faded()).then_some('#'));
                 match letter {
                     Some(letter) => out.push(letter),
                     None => out.push_str(cell.symbol()),
@@ -281,11 +319,46 @@ mod tests {
 
     #[test]
     fn game_over() {
-        let mut app = started(7);
+        let mut app = started(7).with_best(Some(Record {
+            score: 100_000,
+            lines: 120,
+            level: 13,
+        }));
         while app.view().game_over.is_none() {
             press(&mut app, &[Action::HardDrop]);
         }
         assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
+    }
+
+    #[test]
+    fn new_record() {
+        let mut app = started(7).with_best(Some(Record {
+            score: 10,
+            lines: 0,
+            level: 1,
+        }));
+        while app.view().game_over.is_none() {
+            press(&mut app, &[Action::HardDrop]);
+        }
+        assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
+    }
+
+    #[test]
+    fn plain_theme() {
+        let mut app = started(7);
+        press(&mut app, &[Action::HardDrop]);
+        press(&mut app, &[Action::Hold]);
+        assert_snapshot!(render_with(&app, MIN_WIDTH, MIN_HEIGHT, &PLAIN));
+    }
+
+    #[test]
+    fn plain_title() {
+        let app = App::new(7).with_best(Some(Record {
+            score: 4321,
+            lines: 12,
+            level: 2,
+        }));
+        assert_snapshot!(render_with(&app, 80, 24, &PLAIN));
     }
 
     #[test]
