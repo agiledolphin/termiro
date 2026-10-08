@@ -2,25 +2,25 @@
 source: crates/termino-tui/src/render/mod.rs
 expression: "render(&app, MIN_WIDTH, MIN_HEIGHT)"
 ---
-"┌───── TERMINO ──────┐                       "
-"│ . . .   . . . . . .│ LINES 0               "
-"│ . . .       . . . .│                       "
-"│ . . .     . . . . .│ Left/Right move       "
-"│ . . . .     . . . .│ Down       soft drop  "
-"│ . . . . .   . . . .│ Space      hard drop  "
-"│ . . .       . . . .│ Up / X     rotate cw  "
-"│ . . . .   . . . . .│ Z          rotate ccw "
-"│┌──────────────────┐│ P          pause      "
-"││     GAME OVER    ││ Q          quit       "
-"││                  ││                       "
-"││    R  restart    ││                       "
-"││      Q  quit     ││                       "
-"│└──────────────────┘│                       "
-"│ . . . . .   . . . .│                       "
-"│ . . .       . . . .│                       "
-"│ . . . .     . . . .│                       "
-"│ . . .       . . . .│                       "
-"│ . . .       . . . .│                       "
-"│ . . . .     . . . .│                       "
-"│ . . .     . . . . .│                       "
-"└────────────────────┘                       "
+┌ HOLD ──────┐ ┌───── TERMINO ──────┐ ┌ NEXT ──────┐
+│            │ │ . . .JJ . . . . . .│ │    OOOO    │
+│            │ │ . . .JJJJJJ . . . .│ │    OOOO    │
+└────────────┘ │ . . .ZZZZ . . . . .│ │            │
+               │ . . . .ZZZZ . . . .│ │     SSSS   │
+SCORE          │ . . . . .LL . . . .│ │   SSSS     │
+226            │ . . .LLLLLL . . . .│ │            │
+               │┌──────────────────┐│ │    OOOO    │
+LEVEL 1        ││     GAME OVER    ││ │    OOOO    │
+LINES 0        ││                  ││ │            │
+               ││     SCORE 226    ││ │  IIIIIIII  │
+               ││                  ││ │            │
+               ││    R  restart    ││ │            │
+               ││      Q  quit     ││ │     SSSS   │
+               │└──────────────────┘│ │   SSSS     │
+               │ . . .LLLLLL . . . .│ └────────────┘
+               │ . . . .OOOO . . . .│               
+               │ . . .JJOOOO . . . .│               
+               │ . . .JJJJJJ . . . .│               
+               │ . . . .SSSS . . . .│               
+               │ . . .SSSS . . . . .│               
+P  pause/help  └────────────────────┘

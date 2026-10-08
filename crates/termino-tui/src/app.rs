@@ -1,10 +1,13 @@
 use std::time::Duration;
 
-use termino_core::{Action, Game, GameView, Rules};
+use termino_core::{Action, Clear, Event, Game, GameView, Rules};
 
 use crate::input::Command;
 
-/// 应用状态：一局游戏，加上暂停和退出标记。
+/// 消行提示的显示时长。
+const BANNER_TIME: Duration = Duration::from_secs(2);
+
+/// 应用状态：一局游戏，加上暂停、退出标记和消行提示。
 pub struct App {
     seed: u64,
     game: Game,
@@ -12,6 +15,8 @@ pub struct App {
     quit: bool,
     /// 自上一帧以来收到的动作，在下一个逻辑帧统一交给 core。
     pending: Vec<Action>,
+    /// 最近一次消行或 T-Spin，以及剩余显示时间。
+    banner: Option<(Clear, Duration)>,
 }
 
 impl App {
@@ -22,6 +27,7 @@ impl App {
             paused: false,
             quit: false,
             pending: Vec::new(),
+            banner: None,
         }
     }
 
@@ -41,12 +47,26 @@ impl App {
         if self.paused {
             return;
         }
-        self.game.update(dt, &self.pending);
+        if let Some((_, remaining)) = &mut self.banner {
+            *remaining = remaining.saturating_sub(dt);
+            if remaining.is_zero() {
+                self.banner = None;
+            }
+        }
+        for event in self.game.update(dt, &self.pending) {
+            if let Event::Clear(clear) = event {
+                self.banner = Some((clear, BANNER_TIME));
+            }
+        }
         self.pending.clear();
     }
 
     pub fn view(&self) -> GameView<'_> {
         self.game.view()
+    }
+
+    pub fn banner(&self) -> Option<Clear> {
+        self.banner.map(|(clear, _)| clear)
     }
 
     pub fn paused(&self) -> bool {
@@ -126,5 +146,25 @@ mod tests {
         app.handle(Command::Pause);
         app.handle(Command::Quit);
         assert!(app.should_quit());
+    }
+
+    #[test]
+    fn banner_expires_but_not_while_paused() {
+        let mut app = App::new(1);
+        let tetris = Clear {
+            lines: 4,
+            t_spin: None,
+            back_to_back: false,
+            combo: 0,
+            points: 800,
+        };
+        app.banner = Some((tetris, BANNER_TIME));
+        app.tick(SECOND);
+        app.handle(Command::Pause);
+        app.tick(SECOND * 5);
+        assert_eq!(app.banner(), Some(tetris));
+        app.handle(Command::Pause);
+        app.tick(SECOND);
+        assert_eq!(app.banner(), None);
     }
 }

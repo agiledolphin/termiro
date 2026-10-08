@@ -58,8 +58,11 @@ fn kicks(kind: PieceKind, from: Rotation, to: Rotation) -> &'static [Pos] {
     }
 }
 
-/// 按 SRS 把方块转到 `to` 朝向：依次尝试各偏移量，返回第一个放得下的位置。
-pub(crate) fn rotate(board: &Board, piece: Piece, to: Rotation) -> Option<Piece> {
+/// 第 5 个偏移的序号。T 用它转进槽里时，T-Spin 判定从 Mini 升级为完整 T-Spin。
+pub(crate) const LAST_KICK: usize = 4;
+
+/// 按 SRS 把方块转到 `to` 朝向：依次尝试各偏移量，返回第一个放得下的位置及其偏移序号。
+pub(crate) fn rotate(board: &Board, piece: Piece, to: Rotation) -> Option<(Piece, usize)> {
     kicks(piece.kind, piece.rotation, to)
         .iter()
         .map(|&kick| Piece {
@@ -67,7 +70,9 @@ pub(crate) fn rotate(board: &Board, piece: Piece, to: Rotation) -> Option<Piece>
             origin: piece.origin + kick,
             ..piece
         })
-        .find(|candidate| board.fits(candidate.cells()))
+        .enumerate()
+        .find(|(_, candidate)| board.fits(candidate.cells()))
+        .map(|(index, candidate)| (candidate, index))
 }
 
 #[cfg(test)]
@@ -110,7 +115,8 @@ mod tests {
         for kind in PieceKind::ALL {
             for from in ROTATIONS {
                 let start = piece(kind, from, 4, 10);
-                let rotated = rotate(&board, start, from.cw()).unwrap();
+                let (rotated, kick) = rotate(&board, start, from.cw()).unwrap();
+                assert_eq!(kick, 0);
                 assert_eq!(rotated.origin, start.origin);
                 assert_eq!(rotated.rotation, from.cw());
             }
@@ -121,7 +127,8 @@ mod tests {
     fn t_kicks_off_left_wall() {
         // T 朝右贴左墙，转回出生朝向时第 1 个偏移出界，第 2 个偏移 (+1, 0) 成功
         let start = piece(PieceKind::T, Rotation::Right, -1, 5);
-        let rotated = rotate(&Board::new(), start, Rotation::Spawn).unwrap();
+        let (rotated, kick) = rotate(&Board::new(), start, Rotation::Spawn).unwrap();
+        assert_eq!(kick, 1);
         assert_eq!(rotated.origin, Pos::new(0, 5));
     }
 
@@ -130,7 +137,8 @@ mod tests {
         // 竖直的 I 贴右墙，R→2 时第 2 个偏移 (-1, 0) 成功
         let start = piece(PieceKind::I, Rotation::Right, 7, 5);
         assert_eq!(start.cells().map(|c| c.x), [9; 4]);
-        let rotated = rotate(&Board::new(), start, Rotation::Reverse).unwrap();
+        let (rotated, kick) = rotate(&Board::new(), start, Rotation::Reverse).unwrap();
+        assert_eq!(kick, 1);
         assert_eq!(rotated.origin, Pos::new(6, 5));
     }
 

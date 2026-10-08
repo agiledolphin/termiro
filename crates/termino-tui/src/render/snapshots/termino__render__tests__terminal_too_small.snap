@@ -2,13 +2,9 @@
 source: crates/termino-tui/src/render/mod.rs
 expression: "render(&App::new(7), 30, 10)"
 ---
-"                              "
-"                              "
-"                              "
-"                              "
-"      Terminal too small      "
-"    need 45x22, have 30x10    "
-"                              "
-"                              "
-"                              "
-"                              "
+                              
+                              
+                              
+                              
+      Terminal too small      
+    need 52x22, have 30x10

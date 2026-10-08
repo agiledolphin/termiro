@@ -2,25 +2,25 @@
 source: crates/termino-tui/src/render/mod.rs
 expression: "render(&app, MIN_WIDTH, MIN_HEIGHT)"
 ---
-"┌───── TERMINO ──────┐                       "
-"│ . . .     . . . . .│ LINES 0               "
-"│ . . . . . . . . . .│                       "
-"│ . . . . . . . . . .│ Left/Right move       "
-"│ . . . . . . . . . .│ Down       soft drop  "
-"│ . . . . . . . . . .│ Space      hard drop  "
-"│ . . . . . . . . . .│ Up / X     rotate cw  "
-"│ . . . . . . . . . .│ Z          rotate ccw "
-"│┌──────────────────┐│ P          pause      "
-"││      PAUSED      ││ Q          quit       "
-"││                  ││                       "
-"││     P  resume    ││                       "
-"││    R  restart    ││                       "
-"│└──────────────────┘│                       "
-"│ . . . . . . . . . .│                       "
-"│ . . . . . . . . . .│                       "
-"│ . . . . . . . . . .│                       "
-"│ . . . . . . . . . .│                       "
-"│ . . . . . . . . . .│                       "
-"│ . . . . . . . . . .│                       "
-"│ . . . . . . . . . .│                       "
-"└────────────────────┘                       "
+┌ HOLD ──────┐ ┌───── TERMINO ──────┐ ┌ NEXT ──────┐
+│            │ │ . . .SSSS . . . . .│ │   JJ       │
+│            │ │ . . . . . . . . . .│ │   JJJJJJ   │
+└────────────┘ │ . . . . . . . . . .│ │            │
+               │┌──────────────────┐│ │    OOOO    │
+SCORE          ││      PAUSED      ││ │    OOOO    │
+0              ││                  ││ │            │
+               ││ Left   move left ││ │       LL   │
+LEVEL 1        ││ Right  move right││ │   LLLLLL   │
+LINES 0        ││ Down   soft drop ││ │            │
+               ││ Space  hard drop ││ │   ZZZZ     │
+               ││ Up X   rotate    ││ │     ZZZZ   │
+               ││ Z      rotate ccw││ │            │
+               ││ C      hold      ││ │  IIIIIIII  │
+               ││ P      resume    ││ │            │
+               ││ R      restart   ││ └────────────┘
+               ││ Q      quit      ││               
+               │└──────────────────┘│               
+               │ . . . . . . . . . .│               
+               │ . . . .[][] . . . .│               
+               │ . . .[][] . . . . .│               
+P  pause/help  └────────────────────┘

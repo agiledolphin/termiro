@@ -33,6 +33,7 @@ pub fn map_key(key: KeyEvent) -> Option<Command> {
             ' ' => Command::Game(Action::HardDrop),
             'x' => Command::Game(Action::RotateCw),
             'z' => Command::Game(Action::RotateCcw),
+            'c' => Command::Game(Action::Hold),
             'p' => Command::Pause,
             'r' => Command::Restart,
             'q' => Command::Quit,
@@ -65,6 +66,10 @@ mod tests {
         assert_eq!(
             map_key(key(KeyCode::Char('Z'))),
             Some(Command::Game(Action::RotateCcw))
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Char('c'))),
+            Some(Command::Game(Action::Hold))
         );
         assert_eq!(map_key(key(KeyCode::Char('?'))), None);
     }

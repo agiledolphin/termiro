@@ -3,20 +3,32 @@
 //! 界面文字只用 ASCII：方向箭头、`·` 等字符在东亚语言环境下可能被当作双宽字符，导致错位。
 
 mod board;
+mod panel;
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph};
-use termino_core::GameView;
 
 use self::board::BoardWidget;
 use crate::app::App;
 
-const SIDEBAR_WIDTH: u16 = 22;
-const MIN_WIDTH: u16 = board::WIDTH + 1 + SIDEBAR_WIDTH;
+const MIN_WIDTH: u16 = panel::WIDTH + 1 + board::WIDTH + 1 + panel::WIDTH;
 const MIN_HEIGHT: u16 = board::HEIGHT;
+
+const HELP: [(&str, &str); 10] = [
+    ("Left", "move left"),
+    ("Right", "move right"),
+    ("Down", "soft drop"),
+    ("Space", "hard drop"),
+    ("Up X", "rotate"),
+    ("Z", "rotate ccw"),
+    ("C", "hold"),
+    ("P", "resume"),
+    ("R", "restart"),
+    ("Q", "quit"),
+];
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -25,70 +37,77 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let [board_area, _, sidebar_area] = Layout::horizontal([
+    let [left, _, board_area, _, right] = Layout::horizontal([
+        Constraint::Length(panel::WIDTH),
+        Constraint::Length(1),
         Constraint::Length(board::WIDTH),
         Constraint::Length(1),
-        Constraint::Length(SIDEBAR_WIDTH),
+        Constraint::Length(panel::WIDTH),
     ])
     .areas(centered(area, MIN_WIDTH, MIN_HEIGHT));
+    let [hold_area, _, stats_area, hint_area] = Layout::vertical([
+        Constraint::Length(panel::HOLD_HEIGHT),
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas(left);
+    let [next_area, _] = Layout::vertical([
+        Constraint::Length(panel::next_height(app.view().next.len())),
+        Constraint::Min(0),
+    ])
+    .areas(right);
 
     let view = app.view();
+    let buf = frame.buffer_mut();
+    panel::hold(&view, hold_area, buf);
+    panel::next(&view, next_area, buf);
     frame.render_widget(BoardWidget::new(&view), board_area);
-    frame.render_widget(sidebar(&view), sidebar_area);
+    frame.render_widget(panel::stats(&view, app.banner()), stats_area);
+    frame.render_widget(Line::from("P  pause/help".dim()), hint_area);
 
     if view.game_over.is_some() {
-        draw_overlay(frame, board_area, "GAME OVER", &["R  restart", "Q  quit"]);
+        let lines = vec![
+            Line::from("GAME OVER".bold()),
+            Line::from(""),
+            Line::from(format!("SCORE {}", view.score)),
+            Line::from(""),
+            Line::from("R  restart".dim()),
+            Line::from("Q  quit".dim()),
+        ];
+        draw_overlay(frame, board_area, lines.into_iter().map(Line::centered));
     } else if app.paused() {
-        draw_overlay(frame, board_area, "PAUSED", &["P  resume", "R  restart"]);
+        let mut lines = vec![Line::from("PAUSED".bold()).centered(), Line::from("")];
+        lines.extend(
+            HELP.iter()
+                .map(|(key, what)| Line::from(vec![format!(" {key:<7}").bold(), what.dim()])),
+        );
+        draw_overlay(frame, board_area, lines);
     }
 }
 
-fn sidebar(view: &GameView) -> Paragraph<'static> {
-    let help = [
-        ("Left/Right", "move"),
-        ("Down", "soft drop"),
-        ("Space", "hard drop"),
-        ("Up / X", "rotate cw"),
-        ("Z", "rotate ccw"),
-        ("P", "pause"),
-        ("Q", "quit"),
-    ];
-    let mut lines = vec![
-        Line::from(""),
-        Line::from(vec!["LINES ".bold(), view.lines.to_string().into()]),
-        Line::from(""),
-    ];
-    lines.extend(
-        help.iter()
-            .map(|(key, what)| Line::from(vec![format!("{key:<11}").bold(), what.dim()])),
-    );
-    Paragraph::new(lines)
-}
-
 /// 盖在盘面中央的提示框，宽度与盘面内部一致。
-fn draw_overlay(frame: &mut Frame, board_area: Rect, title: &str, hints: &[&str]) {
-    let mut text = vec![Line::from(title.bold()), Line::from("")];
-    text.extend(hints.iter().map(|hint| Line::from(hint.dim())));
-    let area = centered(board_area, board::WIDTH - 2, text.len() as u16 + 2);
+fn draw_overlay<'a>(
+    frame: &mut Frame,
+    board_area: Rect,
+    lines: impl IntoIterator<Item = Line<'a>>,
+) {
+    let lines: Vec<_> = lines.into_iter().collect();
+    let area = centered(board_area, board::WIDTH - 2, lines.len() as u16 + 2);
     frame.render_widget(Clear, area);
-    frame.render_widget(
-        Paragraph::new(text)
-            .alignment(Alignment::Center)
-            .block(Block::bordered()),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(Block::bordered()), area);
 }
 
 fn draw_too_small(frame: &mut Frame, area: Rect) {
     let text = vec![
-        Line::from("Terminal too small".bold()),
+        Line::from("Terminal too small".bold()).centered(),
         Line::from(format!(
             "need {MIN_WIDTH}x{MIN_HEIGHT}, have {}x{}",
             area.width, area.height
-        )),
+        ))
+        .centered(),
     ];
-    let area = centered(area, area.width, 2);
-    frame.render_widget(Paragraph::new(text).alignment(Alignment::Center), area);
+    frame.render_widget(Paragraph::new(text), centered(area, area.width, 2));
 }
 
 /// `area` 中央一块 `width`×`height` 的区域，超出时截断到 `area` 大小。
@@ -110,22 +129,53 @@ mod tests {
     use insta::assert_snapshot;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use termino_core::Action;
+    use ratatui::buffer::Buffer;
+    use ratatui::style::Color;
+    use termino_core::{Action, PieceKind};
 
     use super::*;
     use crate::input::Command;
 
-    fn render(app: &App, width: u16, height: u16) -> TestBackend {
+    /// 把画面转成文本。纯文本快照看不到背景色，所以有背景色的格子
+    /// 换成对应方块的字母（灰色为 `#`），其余格子保留原字符。
+    fn render(app: &App, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| draw(frame, app)).unwrap();
-        terminal.backend().clone()
+        to_text(terminal.backend().buffer())
+    }
+
+    fn to_text(buf: &Buffer) -> String {
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let cell = &buf[(x, y)];
+                let letter = PieceKind::ALL
+                    .into_iter()
+                    .find(|&k| board::color(k) == cell.bg)
+                    .map(PieceKind::letter)
+                    .or((cell.bg == Color::DarkGray).then_some('#'));
+                match letter {
+                    Some(letter) => out.push(letter),
+                    None => out.push_str(cell.symbol()),
+                }
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    fn press(app: &mut App, actions: &[Action]) {
+        for &action in actions {
+            app.handle(Command::Game(action));
+        }
+        app.tick(Duration::ZERO);
     }
 
     #[test]
     fn playing() {
         let mut app = App::new(7);
-        app.handle(Command::Game(Action::HardDrop));
-        app.tick(Duration::ZERO);
+        press(&mut app, &[Action::HardDrop]);
+        press(&mut app, &[Action::Hold]);
         assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
     }
 
@@ -140,8 +190,7 @@ mod tests {
     fn game_over() {
         let mut app = App::new(7);
         while app.view().game_over.is_none() {
-            app.handle(Command::Game(Action::HardDrop));
-            app.tick(Duration::ZERO);
+            press(&mut app, &[Action::HardDrop]);
         }
         assert_snapshot!(render(&app, MIN_WIDTH, MIN_HEIGHT));
     }

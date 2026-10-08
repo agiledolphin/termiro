@@ -10,8 +10,10 @@ mod game;
 mod piece;
 mod randomizer;
 mod rotation;
+mod scoring;
 
 pub use board::{Board, HEIGHT, VISIBLE_HEIGHT, WIDTH};
 pub use game::{Action, Event, Game, GameOverReason, GameView, Rules};
 pub use piece::{Piece, PieceKind, Pos, Rotation};
 pub use randomizer::SevenBag;
+pub use scoring::{Clear, TSpin};

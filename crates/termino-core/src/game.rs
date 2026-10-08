@@ -4,6 +4,7 @@ use crate::board::{Board, VISIBLE_HEIGHT};
 use crate::piece::{Piece, PieceKind, Pos, Rotation};
 use crate::randomizer::SevenBag;
 use crate::rotation;
+use crate::scoring::{self, Clear, Scoring, TSpin};
 
 /// 玩家动作。core 只认识动作；按键映射和 DAS/ARR 由输入层负责。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -16,13 +17,16 @@ pub enum Action {
     HardDrop,
     RotateCw,
     RotateCcw,
+    /// 把当前方块放进暂存区。每个方块锁定前只能用一次。
+    Hold,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     /// 方块锁定到盘面。
     Locked(PieceKind),
-    LinesCleared(u8),
+    /// 消行或 T-Spin，紧跟在 `Locked` 之后。
+    Clear(Clear),
     GameOver(GameOverReason),
 }
 
@@ -36,8 +40,8 @@ pub enum GameOverReason {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rules {
-    /// 重力：自然下落一行所需的时间。M3 引入等级后改由等级决定。
-    pub gravity: Duration,
+    /// 起始等级。之后每消 10 行升一级，重力随等级加快。
+    pub start_level: u32,
     /// 方块落地后到锁定的延迟。
     pub lock_delay: Duration,
     /// 落地后移动或旋转能重置锁定延迟的最大次数，防止无限拖延。
@@ -49,7 +53,7 @@ pub struct Rules {
 impl Default for Rules {
     fn default() -> Self {
         Self {
-            gravity: Duration::from_secs(1),
+            start_level: 1,
             lock_delay: Duration::from_millis(500),
             max_lock_resets: 15,
             preview: 5,
@@ -65,6 +69,11 @@ pub struct GameView<'a> {
     /// 硬降落点预览。
     pub ghost: Option<Piece>,
     pub next: &'a [PieceKind],
+    pub hold: Option<PieceKind>,
+    /// 当前方块是否还能暂存。
+    pub can_hold: bool,
+    pub score: u64,
+    pub level: u32,
     pub lines: u32,
     pub game_over: Option<GameOverReason>,
 }
@@ -77,12 +86,18 @@ pub struct Game {
     queue: Vec<PieceKind>,
     /// 当前方块；只在游戏结束后为 `None`。
     active: Option<Piece>,
+    hold: Option<PieceKind>,
+    can_hold: bool,
     gravity_timer: Duration,
     /// 落地后累计的时间，离开地面时清零。
     lock_timer: Duration,
     lock_resets: u32,
     /// 当前方块到过的最低行。到达新低点时 `lock_resets` 清零。
     lowest_y: i32,
+    /// 当前方块最后一次操作若是旋转，记录所用的踢墙序号；任何位移都会清除它。
+    /// 用于 T-Spin 判定。
+    last_kick: Option<usize>,
+    scoring: Scoring,
     lines: u32,
     over: Option<GameOverReason>,
 }
@@ -117,10 +132,14 @@ impl Game {
             bag,
             queue,
             active: None,
+            hold: None,
+            can_hold: true,
             gravity_timer: Duration::ZERO,
             lock_timer: Duration::ZERO,
             lock_resets: 0,
             lowest_y: 0,
+            last_kick: None,
+            scoring: Scoring::default(),
             lines: 0,
             over: None,
         };
@@ -152,34 +171,53 @@ impl Game {
             active: self.active,
             ghost: self.active.map(|p| self.drop_position(p)),
             next: &self.queue,
+            hold: self.hold,
+            can_hold: self.can_hold,
+            score: self.scoring.score,
+            level: self.level(),
             lines: self.lines,
             game_over: self.over,
         }
     }
 
+    fn level(&self) -> u32 {
+        scoring::level(self.rules.start_level, self.lines)
+    }
+
     fn apply(&mut self, action: Action, events: &mut Vec<Event>) {
         let Some(piece) = self.active else { return };
         let moved = match action {
-            Action::MoveLeft => Some(piece.shifted(-1, 0)).filter(|p| self.fits(p)),
-            Action::MoveRight => Some(piece.shifted(1, 0)).filter(|p| self.fits(p)),
-            Action::RotateCw => rotation::rotate(&self.board, piece, piece.rotation.cw()),
-            Action::RotateCcw => rotation::rotate(&self.board, piece, piece.rotation.ccw()),
+            Action::MoveLeft => Some((piece.shifted(-1, 0), None)),
+            Action::MoveRight => Some((piece.shifted(1, 0), None)),
+            Action::RotateCw => rotation::rotate(&self.board, piece, piece.rotation.cw())
+                .map(|(p, kick)| (p, Some(kick))),
+            Action::RotateCcw => rotation::rotate(&self.board, piece, piece.rotation.ccw())
+                .map(|(p, kick)| (p, Some(kick))),
             Action::SoftDrop => {
                 let down = piece.shifted(0, -1);
                 if self.fits(&down) {
                     self.fell(down);
+                    self.scoring.soft_drop(1);
                     self.gravity_timer = Duration::ZERO;
                 }
                 return;
             }
             Action::HardDrop => {
-                self.fell(self.drop_position(piece));
+                let dropped = self.drop_position(piece);
+                self.scoring
+                    .hard_drop((piece.origin.y - dropped.origin.y) as u32);
+                self.fell(dropped);
                 self.lock(events);
                 return;
             }
+            Action::Hold => {
+                self.hold(events);
+                return;
+            }
         };
-        if let Some(after) = moved {
+        if let Some((after, kick)) = moved.filter(|(p, _)| self.fits(p)) {
             self.player_moved(piece, after);
+            self.last_kick = kick;
         }
     }
 
@@ -195,8 +233,9 @@ impl Game {
         }
         self.lock_timer = Duration::ZERO;
         self.gravity_timer += dt;
-        while self.gravity_timer >= self.rules.gravity {
-            self.gravity_timer -= self.rules.gravity;
+        let gravity = scoring::gravity(self.level());
+        while self.gravity_timer >= gravity {
+            self.gravity_timer -= gravity;
             piece = piece.shifted(0, -1);
             self.fell(piece);
             if self.grounded(piece) {
@@ -221,6 +260,9 @@ impl Game {
 
     /// 方块因重力、软降或硬降下落后调用。
     fn fell(&mut self, piece: Piece) {
+        if self.active != Some(piece) {
+            self.last_kick = None;
+        }
         self.active = Some(piece);
         self.reached_new_low(piece);
     }
@@ -237,26 +279,75 @@ impl Game {
         true
     }
 
+    fn hold(&mut self, events: &mut Vec<Event>) {
+        let Some(piece) = self.active else { return };
+        if !self.can_hold {
+            return;
+        }
+        self.can_hold = false;
+        match self.hold.replace(piece.kind) {
+            Some(kind) => self.spawn_kind(kind, events),
+            None => self.spawn(events),
+        }
+    }
+
     fn lock(&mut self, events: &mut Vec<Event>) {
         let Some(piece) = self.active.take() else {
             return;
         };
+        let t_spin = self.t_spin(piece);
         self.board.fill(piece.cells(), piece.kind);
         events.push(Event::Locked(piece.kind));
         if piece.bottom() >= VISIBLE_HEIGHT {
             return self.end(GameOverReason::LockOut, events);
         }
-        let cleared = self.board.clear_full_rows();
-        if cleared > 0 {
-            self.lines += u32::from(cleared);
-            events.push(Event::LinesCleared(cleared));
+
+        let lines = self.board.clear_full_rows();
+        if let Some(clear) = self.scoring.lock(lines, t_spin, self.level()) {
+            events.push(Event::Clear(clear));
         }
+        self.lines += u32::from(lines);
+        self.can_hold = true;
         self.spawn(events);
     }
 
+    /// 三角判定：T 的最后一次操作是旋转，且中心四个斜角中至少三个被占（墙和地板也算）。
+    /// 朝向一侧的两个角都被占才算完整 T-Spin，否则是 Mini；
+    /// 但用第 5 个踢墙偏移转进去的一律算完整 T-Spin。
+    fn t_spin(&self, piece: Piece) -> Option<TSpin> {
+        let kick = self.last_kick?;
+        if piece.kind != PieceKind::T {
+            return None;
+        }
+        let center = piece.origin + Pos::new(1, 1);
+        let occupied = |(dx, dy): (i32, i32)| !self.board.is_free(center + Pos::new(dx, dy));
+
+        let corners = [(-1, 1), (1, 1), (1, -1), (-1, -1)];
+        if corners.into_iter().filter(|&c| occupied(c)).count() < 3 {
+            return None;
+        }
+        let front = match piece.rotation {
+            Rotation::Spawn => [(-1, 1), (1, 1)],
+            Rotation::Right => [(1, 1), (1, -1)],
+            Rotation::Reverse => [(1, -1), (-1, -1)],
+            Rotation::Left => [(-1, -1), (-1, 1)],
+        };
+        if front.into_iter().all(occupied) || kick == rotation::LAST_KICK {
+            Some(TSpin::Full)
+        } else {
+            Some(TSpin::Mini)
+        }
+    }
+
+    /// 从预览队列取下一个方块出生。
     fn spawn(&mut self, events: &mut Vec<Event>) {
         self.queue.push(self.bag.next_piece());
-        let piece = spawn_piece(self.queue.remove(0));
+        let kind = self.queue.remove(0);
+        self.spawn_kind(kind, events);
+    }
+
+    fn spawn_kind(&mut self, kind: PieceKind, events: &mut Vec<Event>) {
+        let piece = spawn_piece(kind);
         if !self.fits(&piece) {
             return self.end(GameOverReason::BlockOut, events);
         }
@@ -264,9 +355,13 @@ impl Game {
         self.lock_timer = Duration::ZERO;
         self.lock_resets = 0;
         self.lowest_y = piece.bottom();
+        self.active = Some(piece);
+        self.last_kick = None;
         // Guideline：出生后如果下方有空间，立即下落一行
         let down = piece.shifted(0, -1);
-        self.fell(if self.fits(&down) { down } else { piece });
+        if self.fits(&down) {
+            self.fell(down);
+        }
     }
 
     fn end(&mut self, reason: GameOverReason, events: &mut Vec<Event>) {
@@ -305,6 +400,16 @@ mod tests {
             rotation,
             origin: Pos::new(x, y),
         }
+    }
+
+    fn clear(lines: u8, t_spin: Option<TSpin>, points: u32) -> Event {
+        Event::Clear(Clear {
+            lines,
+            t_spin,
+            back_to_back: false,
+            combo: 0,
+            points,
+        })
     }
 
     /// 在指定盘面上放置指定的当前方块，绕开随机器。
@@ -466,10 +571,7 @@ mod tests {
             piece(PieceKind::I, Rotation::Spawn, 4, 10),
         );
         let events = game.update(Duration::ZERO, &[Action::HardDrop]);
-        assert_eq!(
-            events,
-            [Event::Locked(PieceKind::I), Event::LinesCleared(1)]
-        );
+        assert_eq!(events, [Event::Locked(PieceKind::I), clear(1, None, 100)]);
         assert_eq!(game.board, Board::new());
         assert_eq!(game.lines, 1);
     }
@@ -487,10 +589,7 @@ mod tests {
             piece(PieceKind::I, Rotation::Right, 7, 10),
         );
         let events = game.update(Duration::ZERO, &[Action::HardDrop]);
-        assert_eq!(
-            events,
-            [Event::Locked(PieceKind::I), Event::LinesCleared(4)]
-        );
+        assert_eq!(events, [Event::Locked(PieceKind::I), clear(4, None, 800)]);
         assert_eq!(game.board, Board::from_ascii(".JJJJJJJJ."));
     }
 
@@ -513,7 +612,10 @@ mod tests {
         let events = game.update(Duration::ZERO, &[Action::HardDrop]);
         assert_eq!(
             events,
-            [Event::Locked(PieceKind::T), Event::LinesCleared(3)]
+            [
+                Event::Locked(PieceKind::T),
+                clear(3, Some(TSpin::Full), 1600)
+            ]
         );
         assert_eq!(
             game.board,
@@ -524,6 +626,94 @@ mod tests {
                 "
             )
         );
+    }
+
+    /// T 贴左墙、朝右，左侧两个角是墙，右下角是方块，右上角空着。
+    const MINI_SLOT: &str = ".ZZZZZZZZZ";
+
+    #[test]
+    fn t_spin_mini_when_one_front_corner_is_open() {
+        // 原地旋转被挡，第 2 个偏移 (-1, 0) 把 T 推到墙边
+        let mut game = game_with(MINI_SLOT, piece(PieceKind::T, Rotation::Spawn, 0, 0));
+        game.update(Duration::ZERO, &[Action::RotateCw]);
+        assert_eq!(active(&game), piece(PieceKind::T, Rotation::Right, -1, 0));
+
+        let events = game.update(Duration::ZERO, &[Action::HardDrop]);
+        assert_eq!(
+            events,
+            [
+                Event::Locked(PieceKind::T),
+                clear(1, Some(TSpin::Mini), 200)
+            ]
+        );
+    }
+
+    #[test]
+    fn t_spin_requires_rotation_as_last_move() {
+        // 同样的位置，但直接落进去而不是转进去
+        let mut game = game_with(MINI_SLOT, piece(PieceKind::T, Rotation::Right, -1, 5));
+        let events = game.update(Duration::ZERO, &[Action::HardDrop]);
+        assert_eq!(events, [Event::Locked(PieceKind::T), clear(1, None, 100)]);
+    }
+
+    #[test]
+    fn drops_add_score() {
+        let mut game = game_with("", piece(PieceKind::T, Rotation::Spawn, 3, 10));
+        game.update(Duration::ZERO, &[Action::SoftDrop, Action::SoftDrop]);
+        assert_eq!(game.view().score, 2);
+        // 从 y = 8 硬降到 y = -1，共 9 行
+        game.update(Duration::ZERO, &[Action::HardDrop]);
+        assert_eq!(game.view().score, 2 + 18);
+    }
+
+    #[test]
+    fn level_rises_every_ten_lines_and_speeds_up_gravity() {
+        let mut game = game_with("IIII....II", piece(PieceKind::I, Rotation::Spawn, 4, 10));
+        game.lines = 9;
+        game.update(Duration::ZERO, &[Action::HardDrop]);
+        assert_eq!(game.view().level, 2);
+
+        let y = active(&game).origin.y;
+        game.update(ms(792), &[]);
+        assert_eq!(active(&game).origin.y, y);
+        game.update(ms(1), &[]);
+        assert_eq!(active(&game).origin.y, y - 1);
+    }
+
+    #[test]
+    fn hold_swaps_once_per_piece() {
+        let mut game = Game::new(5, Rules::default());
+        let first = active(&game).kind;
+        let second = game.view().next[0];
+
+        game.update(Duration::ZERO, &[Action::Hold]);
+        assert_eq!(active(&game).kind, second);
+        assert_eq!(game.view().hold, Some(first));
+        assert!(!game.view().can_hold);
+
+        // 锁定前再按无效
+        game.update(Duration::ZERO, &[Action::Hold]);
+        assert_eq!(active(&game).kind, second);
+
+        game.update(Duration::ZERO, &[Action::HardDrop]);
+        assert!(game.view().can_hold);
+        let third = active(&game).kind;
+        game.update(Duration::ZERO, &[Action::Hold]);
+        assert_eq!(active(&game).kind, first);
+        assert_eq!(game.view().hold, Some(third));
+    }
+
+    #[test]
+    fn held_piece_returns_at_spawn_position() {
+        let mut game = Game::new(5, Rules::default());
+        game.update(
+            Duration::ZERO,
+            &[Action::RotateCw, Action::MoveLeft, Action::Hold],
+        );
+        game.update(Duration::ZERO, &[Action::HardDrop, Action::Hold]);
+        let returned = active(&game);
+        assert_eq!(returned.rotation, Rotation::Spawn);
+        assert_eq!(returned.bottom(), VISIBLE_HEIGHT - 1);
     }
 
     #[test]

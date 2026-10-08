@@ -13,6 +13,7 @@ fn action() -> impl Strategy<Value = Action> {
         Just(Action::HardDrop),
         Just(Action::RotateCw),
         Just(Action::RotateCcw),
+        Just(Action::Hold),
     ]
 }
 
@@ -30,6 +31,7 @@ proptest! {
     fn invariants_hold_for_any_input(seed: u64, frames in frames()) {
         let mut game = Game::new(seed, Rules::default());
         let (mut locked, mut cleared) = (0i64, 0i64);
+        let mut score = 0;
 
         for (actions, dt) in frames {
             let was_over = game.view().game_over.is_some();
@@ -40,7 +42,7 @@ proptest! {
             for event in &events {
                 match event {
                     Event::Locked(_) => locked += 1,
-                    Event::LinesCleared(n) => cleared += i64::from(*n),
+                    Event::Clear(clear) => cleared += i64::from(clear.lines),
                     Event::GameOver(_) => {}
                 }
             }
@@ -49,6 +51,9 @@ proptest! {
             prop_assert_eq!(view.board.filled_count() as i64, 4 * locked - 10 * cleared);
             prop_assert_eq!(i64::from(view.lines), cleared);
             prop_assert!(!has_full_row(view.board));
+            prop_assert!(view.score >= score);
+            score = view.score;
+            prop_assert_eq!(view.level, 1 + view.lines / 10);
             prop_assert_eq!(view.active.is_none(), view.game_over.is_some());
             if let (Some(active), Some(ghost)) = (view.active, view.ghost) {
                 prop_assert!(view.board.fits(active.cells()));
@@ -71,5 +76,7 @@ proptest! {
         prop_assert_eq!(va.board, vb.board);
         prop_assert_eq!(va.active, vb.active);
         prop_assert_eq!(va.next, vb.next);
+        prop_assert_eq!(va.hold, vb.hold);
+        prop_assert_eq!(va.score, vb.score);
     }
 }
