@@ -1,0 +1,14 @@
+[package]
+name = "termino-core"
+description = "Termino 的纯游戏逻辑：零 IO、确定性"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
