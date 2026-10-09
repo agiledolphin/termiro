@@ -37,6 +37,11 @@ impl Theme {
         self.depth
     }
 
+    /// 是否只用 ASCII 字符。
+    pub fn ascii(&self) -> bool {
+        self.ascii
+    }
+
     /// 方块颜色；无颜色模式下为 `None`。
     pub fn color(&self, kind: PieceKind) -> Option<Color> {
         use PieceKind::*;

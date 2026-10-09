@@ -1,0 +1,28 @@
+---
+source: crates/termino-tui/src/render/mod.rs
+expression: "render(&app, 80, 24)"
+---
+                     *                                                          
+                                                .                               
+                                                                                
+                                                                                
+                                     ^    *      *                              
+                                .   █▀▀  ▄█                                     
+                                    ▀▀█   █                                     
+                                    ▀▀▀  ▀▀▀      o                             
+                                                                                
+                                                                                
+                                    .        .                                  
+                                                                                
+                             O   O  OO   O  O    O O         *                  
+                            OOOOOOOOOOOOOOOOOOOOOOOO                            
+                                                                                
+                  o     ZZ  Z   ZZ   Z  ZZ   Z  Z   ZZZ                         
+                       ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ                       
+                       ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ                       
+                   +   ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ                       
+                      ====================================                      
+                                                                                
+                                HAPPY BIRTHDAY!                                 
+                                                                                
+                  Space  blow out the candles      Esc  close

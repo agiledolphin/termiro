@@ -66,6 +66,8 @@ const BOTTOM_TIER_WIDTH: u16 = 34;
 const NAME_MAX_WIDTH: usize = BOTTOM_TIER_WIDTH as usize - 2;
 
 /// 数字蜡烛的 3×5 像素字，每个像素占 1 列，像细长的数字蜡烛；两根之间空 2 列。
+/// 平时用半格方块 `▀ ▄ █` 把上下两个像素画在一格里，只占 3 行；
+/// 这些字符和方框线一样可能被当作双宽字符，所以只用 ASCII 时改用 `@`，占 5 行。
 const DIGITS: [[&str; 5]; 10] = [
     ["###", "#.#", "#.#", "#.#", "###"],
     [".#.", "##.", ".#.", ".#.", "###"],
@@ -185,11 +187,15 @@ struct Candles {
 enum CandleCell {
     /// 普通蜡烛的条纹，`true` 为彩色段。
     Stripe(bool),
+    /// 数字蜡烛的一个像素，用背景色填充。
     Digit,
+    /// 数字蜡烛的半格方块字符，用前景色画。
+    Half(char),
 }
 
 impl Candles {
-    fn new(age: Option<u8>) -> Self {
+    /// `compact` 为真时数字蜡烛用半格方块画成 3 行高。
+    fn new(age: Option<u8>, compact: bool) -> Self {
         let bottom = TIERS_TOP - 1;
         let mut cells = Vec::new();
         let mut flames = Vec::new();
@@ -202,14 +208,32 @@ impl Candles {
                     .collect();
                 let count = digits.len() as u16;
                 let width = count * DIGIT_WIDTH + (count - 1) * DIGIT_GAP;
-                let top = bottom - 4;
+                let rows = if compact { 3 } else { 5 };
+                let top = bottom + 1 - rows;
                 let mut left = (CAKE_WIDTH - width) / 2;
                 for digit in digits {
-                    for (dy, row) in DIGITS[digit].iter().enumerate() {
-                        for (dx, pixel) in row.chars().enumerate() {
-                            if pixel == '#' {
-                                cells.push((left + dx as u16, top + dy as u16, CandleCell::Digit));
-                            }
+                    let pixel = |x: usize, y: usize| {
+                        DIGITS[digit]
+                            .get(y)
+                            .is_some_and(|row| row.as_bytes()[x] == b'#')
+                    };
+                    for dy in 0..rows {
+                        for dx in 0..DIGIT_WIDTH {
+                            let (x, y) = (left + dx, top + dy);
+                            let (col, row) = (usize::from(dx), usize::from(dy));
+                            let cell = if compact {
+                                match (pixel(col, row * 2), pixel(col, row * 2 + 1)) {
+                                    (true, true) => CandleCell::Half('█'),
+                                    (true, false) => CandleCell::Half('▀'),
+                                    (false, true) => CandleCell::Half('▄'),
+                                    (false, false) => continue,
+                                }
+                            } else if pixel(col, row) {
+                                CandleCell::Digit
+                            } else {
+                                continue;
+                            };
+                            cells.push((x, y, cell));
                         }
                     }
                     flames.push((left + DIGIT_WIDTH / 2, top - 1));
@@ -286,7 +310,7 @@ impl Widget for Cake<'_> {
             }
         }
 
-        let candles = Candles::new(self.age);
+        let candles = Candles::new(self.age, !self.theme.ascii());
         let height = TIERS_TOP - candles.top;
         if let Some(shift) = drop_shift(ms, CANDLES_DROP_MS, candles.top, height) {
             self.candles(&mut canvas, &candles, shift, frame, palette);
@@ -377,6 +401,10 @@ impl Cake<'_> {
                     ('.', Style::new().bg(palette.gold).fg(Color::White).bold())
                 }
                 (CandleCell::Digit, Some(palette)) => (' ', Style::new().bg(palette.gold)),
+                (CandleCell::Half(symbol), None) => (symbol, Style::new()),
+                (CandleCell::Half(symbol), Some(palette)) => {
+                    (symbol, Style::new().fg(palette.gold))
+                }
             };
             canvas.put(i32::from(MARGIN + x), i32::from(y) + shift, symbol, style);
         }
@@ -535,9 +563,12 @@ mod tests {
     use crate::party::INTRO;
 
     fn render(stage: Stage, depth: ColorDepth, name: Option<&str>, age: Option<u8>) -> Buffer {
+        render_with(stage, Theme::new(depth, false), name, age)
+    }
+
+    fn render_with(stage: Stage, theme: Theme, name: Option<&str>, age: Option<u8>) -> Buffer {
         let area = Rect::new(0, 0, WIDTH, HEIGHT);
         let mut buf = Buffer::empty(area);
-        let theme = Theme::new(depth, false);
         Cake {
             stage,
             theme: &theme,
@@ -592,30 +623,53 @@ mod tests {
 
     /// 点着的烛焰数：数字蜡烛的火苗位置上是火苗字符。
     fn lit_flames(buf: &Buffer, age: Option<u8>) -> usize {
-        Candles::new(age)
+        Candles::new(age, true)
             .flames
             .iter()
             .filter(|&&(x, y)| ["^", "*", "'", "/", "("].contains(&buf[(MARGIN + x, y)].symbol()))
             .count()
     }
 
+    /// 数字蜡烛那几行的文字，从第一根蜡烛的左边开始。
+    fn candle_rows(buf: &Buffer, compact: bool, width: u16) -> Vec<String> {
+        let candles = Candles::new(Some(51), compact);
+        let left = candles.cells.iter().map(|c| c.0).min().unwrap();
+        (candles.top..TIERS_TOP)
+            .map(|y| {
+                (left..left + width)
+                    .map(|x| buf[(MARGIN + x, y)].symbol())
+                    .collect()
+            })
+            .collect()
+    }
+
     #[test]
-    fn age_becomes_digit_candles() {
-        let pixels = |digit: usize| {
-            DIGITS[digit]
-                .iter()
-                .map(|row| row.matches('#').count())
-                .sum::<usize>()
-        };
+    fn age_becomes_compact_digit_candles() {
         let buf = render(Stage::Lit(ms(0)), ColorDepth::None, None, Some(51));
-        assert_eq!(count(&buf, "@"), pixels(5) + pixels(1));
+        assert_eq!(
+            candle_rows(&buf, true, 8),
+            ["█▀▀  ▄█ ", "▀▀█   █ ", "▀▀▀  ▀▀▀"]
+        );
         // 两根数字蜡烛各有一簇火苗，左右对称地排在中间
         assert_eq!(lit_flames(&buf, Some(51)), 2);
-        let flames = Candles::new(Some(51)).flames;
+        let flames = Candles::new(Some(51), true).flames;
         assert_eq!(flames[0].0 + flames[1].0 + 1, CAKE_WIDTH);
-        // 没有年龄时是一根普通蜡烛
+    }
+
+    #[test]
+    fn ascii_digit_candles_are_five_rows_tall() {
+        let theme = Theme::new(ColorDepth::None, true);
+        let buf = render_with(Stage::Lit(ms(0)), theme, None, Some(51));
+        assert_eq!(
+            candle_rows(&buf, false, 8),
+            ["@@@   @ ", "@    @@ ", "@@@   @ ", "  @   @ ", "@@@  @@@"]
+        );
+    }
+
+    #[test]
+    fn no_age_means_one_plain_candle() {
         let plain = render(Stage::Lit(ms(0)), ColorDepth::None, None, None);
-        assert_eq!(count(&plain, "@"), 0);
+        assert_eq!(count(&plain, "█") + count(&plain, "@"), 0);
         assert_eq!(count(&plain, "|"), 4);
         assert_eq!(lit_flames(&plain, None), 1);
     }
@@ -627,12 +681,12 @@ mod tests {
         let start = stage(0);
         assert_eq!(count(&start, "="), CAKE_WIDTH as usize);
         assert_eq!(
-            count(&start, "#") + count(&start, "%") + count(&start, "@"),
+            count(&start, "#") + count(&start, "%") + count(&start, "█"),
             0
         );
         // 蛋糕都落好、蜡烛还没点
         let stacked = stage(LIGHT_MS - 1);
-        assert!(count(&stacked, "#") > 0 && count(&stacked, "@") > 0);
+        assert!(count(&stacked, "#") > 0 && count(&stacked, "█") > 0);
         assert_eq!(lit_flames(&stacked, Some(51)), 0);
         // 逐一点亮
         assert_eq!(lit_flames(&stage(LIGHT_MS), Some(51)), 1);
@@ -676,7 +730,7 @@ mod tests {
     fn blowing_out_makes_smoke_then_fireworks() {
         let blown = |t| render(Stage::Blown(t), ColorDepth::None, None, Some(51));
         let smoke = blown(FRAME_TIME * 2);
-        let flames = Candles::new(Some(51)).flames;
+        let flames = Candles::new(Some(51), true).flames;
         assert!(
             flames
                 .iter()

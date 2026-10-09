@@ -477,6 +477,12 @@ mod tests {
     }
 
     #[test]
+    fn birthday_cake_compact_candles() {
+        let app = party("Ada", 51, INTRO, false);
+        assert_snapshot!(render(&app, 80, 24));
+    }
+
+    #[test]
     fn birthday_cake_blown() {
         let app = party("Ada", 51, Duration::from_millis(1350), true);
         assert_snapshot!(render_with(&app, 80, 24, &PLAIN));
