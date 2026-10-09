@@ -19,7 +19,7 @@ use crate::platform::ColorDepth;
 /// 循环动画每帧 150ms，24 帧一轮（3.6 秒）。烛焰 4 帧、彩虹色 8 帧、彩纸和烟花 24 帧一个周期，
 /// 都能整除 24，循环时画面不会跳。
 const FRAME_TIME: Duration = Duration::from_millis(150);
-const FRAMES: u32 = 24;
+pub(super) const FRAMES: u32 = 24;
 
 /// 三层蛋糕和盘子，从上到下。每个字符代表一类格子：`w` 奶油、`p` 草莓、`v` 香草、
 /// `c` 巧克力、`=` 盘子，空格透明。宽度都取偶数，偶数宽的名字和蜡烛能正好居中。
@@ -54,9 +54,8 @@ const DROP_MS: u64 = 400;
 const LIGHT_MS: u64 = 2000;
 const LIGHT_STEP_MS: u64 = 200;
 const _: () = assert!(CANDLES_DROP_MS + DROP_MS <= LIGHT_MS, "蜡烛要先落好再点亮");
-/// 吹灭蜡烛后，先冒烟，过一会儿开始放烟花。
+/// 吹灭蜡烛后冒烟的帧数，之后开始放烟花（烟花见 `fireworks` 模块）。
 const SMOKE_FRAMES: i32 = 8;
-const FIREWORKS_DELAY: Duration = Duration::from_millis(900);
 
 /// 名字写在最下层蛋糕胚三行的中间一行（TIERS 第 9 行），在这一层（第 1 到 34 列）里水平居中，
 /// 两侧各留一格不写。
@@ -111,29 +110,11 @@ const RAINBOW: [Color; 8] = [
 const STRIPE: Color = Color::LightBlue;
 const CONFETTI: [char; 4] = ['*', 'o', '+', '.'];
 const CONFETTI_COUNT: u16 = 14;
-/// 烟花：(中心列, 中心行, 在一轮中绽放的帧, 颜色)。画在蛋糕两侧的空处。
-const BURSTS: [(i32, i32, u32, Color); 4] = [
-    (6, 5, 0, Color::LightRed),
-    (37, 4, 6, Color::Yellow),
-    (8, 2, 12, Color::Cyan),
-    (36, 8, 18, Color::LightMagenta),
-];
-const BURST_DIRECTIONS: [(i32, i32); 8] = [
-    (-1, -1),
-    (0, -1),
-    (1, -1),
-    (-1, 0),
-    (1, 0),
-    (-1, 1),
-    (0, 1),
-    (1, 1),
-];
-
 const GREETING: &str = "HAPPY BIRTHDAY!";
 const WISH: &str = "MAKE A WISH!";
 
 /// 循环动画在 `t` 时应显示的帧。
-fn frame_at(t: Duration) -> u32 {
+pub(super) fn frame_at(t: Duration) -> u32 {
     (t.as_millis() / FRAME_TIME.as_millis() % u128::from(FRAMES)) as u32
 }
 
@@ -288,12 +269,8 @@ impl Widget for Cake<'_> {
             Stage::Lit(t) | Stage::Blown(t) => (u64::MAX, frame_at(t)),
         };
 
-        match self.stage {
-            Stage::Lit(_) => self.confetti(&mut canvas, frame),
-            Stage::Blown(t) if t >= FIREWORKS_DELAY => {
-                self.fireworks(&mut canvas, frame_at(t - FIREWORKS_DELAY))
-            }
-            _ => {}
+        if let Stage::Lit(_) = self.stage {
+            self.confetti(&mut canvas, frame);
         }
 
         let label = self.name.and_then(name_label);
@@ -450,32 +427,6 @@ impl Cake<'_> {
             let color = RAINBOW[(i as usize + frame as usize / 2) % RAINBOW.len()];
             let symbol = CONFETTI[i as usize % CONFETTI.len()];
             canvas.put(x, y, symbol, self.theme.fg(color));
-        }
-    }
-
-    /// 烟花从中心绽开，扩散成一圈后淡去。
-    fn fireworks(&self, canvas: &mut Canvas, frame: u32) {
-        for &(cx, cy, start, color) in &BURSTS {
-            let age = (frame + FRAMES - start) % FRAMES;
-            let (radius, symbol) = match age {
-                0 => (0, '*'),
-                1 => (1, '+'),
-                2 => (2, '*'),
-                3 | 4 => (3, '.'),
-                _ => continue,
-            };
-            let mut style = self.theme.fg(color).bold();
-            if age >= 4 {
-                style = self.theme.fg(color).dim();
-            }
-            if radius == 0 {
-                canvas.put(cx, cy, symbol, style);
-                continue;
-            }
-            for (dx, dy) in BURST_DIRECTIONS {
-                // 横向距离加倍，终端字符瘦长，这样烟花看起来是圆的
-                canvas.put(cx + dx * 2 * radius, cy + dy * radius, symbol, style);
-            }
         }
     }
 }
@@ -727,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn blowing_out_makes_smoke_then_fireworks() {
+    fn blowing_out_makes_smoke() {
         let blown = |t| render(Stage::Blown(t), ColorDepth::None, None, Some(51));
         let smoke = blown(FRAME_TIME * 2);
         let flames = Candles::new(Some(51), true).flames;
@@ -738,9 +689,8 @@ mod tests {
             "吹灭后不再有火苗"
         );
         assert!(count(&smoke, "(") + count(&smoke, ")") > 0);
-        // 烟散了以后放烟花：第一朵在第 0 帧绽放，中心是 `*`
-        let fireworks = blown(FIREWORKS_DELAY);
-        let (cx, cy, _, _) = BURSTS[0];
-        assert_eq!(fireworks[(cx as u16, cy as u16)].symbol(), "*");
+        // 几帧后烟散了
+        let later = blown(FRAME_TIME * SMOKE_FRAMES as u32);
+        assert_eq!(count(&later, "(") + count(&later, ")"), 0);
     }
 }

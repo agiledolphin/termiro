@@ -4,6 +4,7 @@
 
 mod board;
 mod cake;
+mod fireworks;
 mod logo;
 mod panel;
 mod theme;
@@ -242,6 +243,8 @@ fn draw_cake(frame: &mut Frame, area: Rect, app: &App, stage: Stage, theme: &The
         name,
         age: app.age(),
     };
+    // 烟花铺满整个画面，画在蛋糕下面一层
+    frame.render_widget(fireworks::Fireworks { stage, theme }, area);
     frame.render_widget(cake, centered(art, cake::WIDTH, cake::HEIGHT));
     if let Some(line) = cake::greeting(stage, theme) {
         frame.render_widget(line.centered(), greeting);
@@ -484,7 +487,7 @@ mod tests {
 
     #[test]
     fn birthday_cake_blown() {
-        let app = party("Ada", 51, Duration::from_millis(1350), true);
+        let app = party("Ada", 51, Duration::from_millis(1950), true);
         assert_snapshot!(render_with(&app, 80, 24, &PLAIN));
     }
 
