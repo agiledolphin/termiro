@@ -33,3 +33,10 @@ color = "auto"
 # Draw borders with plain ASCII (+ - |). Turn this on if borders look broken,
 # e.g. when the terminal treats box-drawing characters as double width.
 ascii = false
+
+# A small surprise on the title screen.
+[birthday]
+# Name to show with it. Leave empty for none.
+name = ""
+# Play music with it.
+sound = true

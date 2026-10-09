@@ -23,7 +23,7 @@ TTTTTT  ZZZZZZ  LLLL    OO      OO  IIIIII  JJ    JJ  SSSSSS
 
 ## 安装
 
-需要 Rust 1.85 或更新版本。
+需要 Rust 1.85 或更新版本。Linux 上还需要 ALSA 开发包，例如 Debian/Ubuntu 上运行 `sudo apt install libasound2-dev pkg-config`，Fedora 上运行 `sudo dnf install alsa-lib-devel`。
 
 ```bash
 git clone https://github.com/agiledolphin/termiro.git

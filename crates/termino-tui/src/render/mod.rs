@@ -49,7 +49,7 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input, theme: &Theme) {
     }
 
     if let Some(elapsed) = app.cake() {
-        draw_cake(frame, area, elapsed, theme);
+        draw_cake(frame, area, app, elapsed, theme);
         return;
     }
     if app.on_title() {
@@ -220,20 +220,41 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App, keys: &Keymap, theme: &T
     );
 }
 
-/// 彩蛋：生日蛋糕、彩虹色的祝福，以及关闭提示。
-fn draw_cake(frame: &mut Frame, area: Rect, elapsed: Duration, theme: &Theme) {
+/// 彩蛋：生日蛋糕、彩虹色的祝福，以及关闭提示。名字写在蛋糕上，太长时改放在祝福语下方。
+fn draw_cake(frame: &mut Frame, area: Rect, app: &App, elapsed: Duration, theme: &Theme) {
     let n = cake::frame_at(elapsed);
-    let block = centered(area, cake::WIDTH, cake::HEIGHT + 4);
-    let [art, _, greeting, _, hint] = Layout::vertical([
+    let name = app.name();
+    let name_below = name.filter(|name| cake::name_label(name).is_none());
+    let block = centered(area, cake::WIDTH, cake::HEIGHT + 5);
+    let [art, _, greeting, below, _, hint] = Layout::vertical([
         Constraint::Length(cake::HEIGHT),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(block);
-    frame.render_widget(cake::Cake { frame: n, theme }, art);
+    frame.render_widget(
+        cake::Cake {
+            frame: n,
+            theme,
+            name,
+        },
+        art,
+    );
     frame.render_widget(cake::greeting(n, theme).centered(), greeting);
+    if let Some(name) = name_below {
+        let line = Line::from(format!("~ {name} ~").bold()).centered();
+        frame.render_widget(
+            line,
+            Rect {
+                width: area.width,
+                x: area.x,
+                ..below
+            },
+        );
+    }
     frame.render_widget(Line::from("press any key".dim()).centered(), hint);
 }
 
@@ -431,7 +452,14 @@ mod tests {
 
     #[test]
     fn birthday_cake() {
-        let mut app = App::new(7);
+        let mut app = App::new(7).with_name("Ada");
+        app.handle(Command::EasterEgg);
+        assert_snapshot!(render_with(&app, 80, 24, &PLAIN));
+    }
+
+    #[test]
+    fn birthday_cake_with_long_name() {
+        let mut app = App::new(7).with_name(&"Bartholomew".repeat(3));
         app.handle(Command::EasterEgg);
         assert_snapshot!(render_with(&app, 80, 24, &PLAIN));
     }

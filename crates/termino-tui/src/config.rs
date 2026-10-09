@@ -16,6 +16,26 @@ pub struct Config {
     pub timing: Timing,
     pub keys: Keys,
     pub display: Display,
+    pub birthday: Birthday,
+}
+
+/// 开始界面彩蛋的设置。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Birthday {
+    /// 写在蛋糕上的名字，空字符串表示不写。
+    pub name: String,
+    /// 是否播放生日歌。
+    pub sound: bool,
+}
+
+impl Default for Birthday {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            sound: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -161,6 +181,13 @@ mod tests {
         assert_eq!(config.display.color, ColorSetting::Ansi256);
         assert!(config.display.ascii);
         assert!(Config::parse("[display]\ncolor = \"rainbow\"").is_err());
+    }
+
+    #[test]
+    fn parses_birthday_settings() {
+        let config = Config::parse("[birthday]\nname = \"小明\"").unwrap();
+        assert_eq!(config.birthday.name, "小明");
+        assert!(config.birthday.sound);
     }
 
     #[test]

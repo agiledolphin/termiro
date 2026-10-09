@@ -17,15 +17,17 @@ const FRAME_TIME: Duration = Duration::from_millis(150);
 const FRAMES: u32 = 16;
 
 /// 蛋糕形状，每个字符代表一类格子：`*` 烛焰、`|` 蜡烛、`w` 奶油、
-/// `p` 草莓蛋糕胚、`c` 巧克力蛋糕胚、`=` 盘子，空格透明。
-const CAKE: [&str; 12] = [
-    "       *    *    *    *    *       ",
-    "       |    |    |    |    |       ",
-    "       |    |    |    |    |       ",
-    "    wwwwwwwwwwwwwwwwwwwwwwwwwww    ",
-    "    wpwwwpwwppwwwpwwpwwwwpwwpww    ",
-    "    ppppppppppppppppppppppppppp    ",
-    "    ppppppppppppppppppppppppppp    ",
+/// `p` 草莓、`v` 香草、`c` 巧克力三层蛋糕胚、`=` 盘子，空格透明。
+const CAKE: [&str; 14] = [
+    "                 *                 ",
+    "                 |                 ",
+    "                 |                 ",
+    "          wwwwwwwwwwwwwww          ",
+    "          wpwwpwwwppwwpww          ",
+    "          ppppppppppppppp          ",
+    "     wwwwwwwwwwwwwwwwwwwwwwwww     ",
+    "     wvwwwvwwvvwwwvwwvwwwwvwwv     ",
+    "     vvvvvvvvvvvvvvvvvvvvvvvvv     ",
     " wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww ",
     " wccwwcwwwccwwwcwwccwwwcwwcwwwcccw ",
     " ccccccccccccccccccccccccccccccccc ",
@@ -33,16 +35,18 @@ const CAKE: [&str; 12] = [
     "===================================",
 ];
 const CAKE_WIDTH: u16 = 35;
-/// 第一根蜡烛所在的列，蜡烛之间相隔 5 列。
-const FIRST_CANDLE: usize = 7;
 /// 两侧和上方留给飘落彩纸的空间。
 const MARGIN: u16 = 4;
-const SKY: u16 = 4;
+const SKY: u16 = 2;
 pub const WIDTH: u16 = CAKE_WIDTH + 2 * MARGIN;
 /// 正好 16 行：彩纸每帧落一行，一轮落完一圈。
 pub const HEIGHT: u16 = CAKE.len() as u16 + SKY;
 
 const GREETING: &str = "HAPPY BIRTHDAY!";
+/// 名字写在最下层蛋糕胚的第一行，以第 17 列为中心；两侧各留一格不写。
+const NAME_ROW: u16 = 11;
+const NAME_CENTER: u16 = 17;
+const NAME_MAX_WIDTH: usize = 31;
 
 /// 烛焰的四种形态，依次循环，看起来在跳动。
 const FLAMES: [(char, Color); 4] = [
@@ -61,13 +65,8 @@ const RAINBOW: [Color; 8] = [
     Color::Magenta,
     Color::LightMagenta,
 ];
-const CANDLES: [Color; 5] = [
-    Color::Cyan,
-    Color::LightMagenta,
-    Color::Yellow,
-    Color::Green,
-    Color::LightBlue,
-];
+/// 蜡烛是这个颜色和奶油色相间的条纹。
+const CANDLE: Color = Color::LightBlue;
 const CONFETTI: [char; 4] = ['*', 'o', '+', '.'];
 const CONFETTI_COUNT: u16 = 14;
 
@@ -80,6 +79,16 @@ pub fn frame_at(elapsed: Duration) -> u32 {
 pub struct Cake<'a> {
     pub frame: u32,
     pub theme: &'a Theme,
+    pub name: Option<&'a str>,
+}
+
+/// 写在蛋糕上的名字：放得下时字母之间加空格，像奶油裱字；再放不下就返回 `None`，
+/// 由调用方改放在祝福语下方。
+pub fn name_label(name: &str) -> Option<String> {
+    let spaced: String = name.chars().map(String::from).collect::<Vec<_>>().join(" ");
+    [format!(" {spaced} "), format!(" {name} ")]
+        .into_iter()
+        .find(|label| Span::raw(label.as_str()).width() <= NAME_MAX_WIDTH)
 }
 
 impl Widget for Cake<'_> {
@@ -98,39 +107,39 @@ impl Widget for Cake<'_> {
 
         for (dy, row) in CAKE.iter().enumerate() {
             for (dx, part) in row.chars().enumerate() {
-                let candle = dx.saturating_sub(FIRST_CANDLE) / 5;
                 // 蛋糕胚上零星的糖粒
                 let sprinkle = (dx * 7 + dy * 5) % 9 == 0;
                 let (symbol, style) = match (part, colors) {
                     (' ', _) => continue,
                     ('*', _) => {
-                        let (symbol, color) = FLAMES[(frame + candle) % FLAMES.len()];
+                        let (symbol, color) = FLAMES[frame % FLAMES.len()];
                         (symbol, self.theme.fg(color).bold())
                     }
                     ('=', _) => ('=', self.theme.fg(Color::Gray)),
                     // 无颜色时用字符画
                     ('|', None) => ('|', Style::new()),
                     ('w', None) => ('~', Style::new()),
-                    ('p' | 'c', None) if sprinkle => {
+                    ('p' | 'v' | 'c', None) if sprinkle => {
                         (if (frame + dx) % 4 < 2 { 'o' } else { '.' }, Style::new())
                     }
                     ('p', None) => (':', Style::new()),
+                    ('v', None) => ('%', Style::new()),
                     ('c', None) => ('#', Style::new()),
                     // 有颜色时用背景色填充；蜡烛是彩色和白色相间的条纹
                     ('|', Some(palette)) => {
                         let color = if dy % 2 == 1 {
-                            CANDLES[candle % CANDLES.len()]
+                            CANDLE
                         } else {
                             palette.frosting
                         };
                         (' ', Style::new().bg(color))
                     }
                     ('w', Some(palette)) => (' ', Style::new().bg(palette.frosting)),
-                    ('p' | 'c', Some(palette)) => {
-                        let base = if part == 'p' {
-                            palette.strawberry
-                        } else {
-                            palette.chocolate
+                    ('p' | 'v' | 'c', Some(palette)) => {
+                        let base = match part {
+                            'p' => palette.strawberry,
+                            'v' => palette.vanilla,
+                            _ => palette.chocolate,
                         };
                         if sprinkle {
                             let color = RAINBOW[(frame + dx) % RAINBOW.len()];
@@ -143,6 +152,19 @@ impl Widget for Cake<'_> {
                 };
                 let (x, y) = (MARGIN + dx as u16, SKY + dy as u16);
                 put(buf, area, x, y, symbol, style);
+            }
+        }
+
+        if let Some(label) = self.name.and_then(name_label) {
+            let width = Span::raw(label.as_str()).width() as u16;
+            let x = MARGIN + NAME_CENTER - width / 2;
+            let style = match colors {
+                Some(palette) => Style::new().bg(palette.chocolate).fg(palette.frosting),
+                None => Style::new(),
+            };
+            if x + width <= area.width && SKY + NAME_ROW < area.height {
+                let (x, y) = (area.x + x, area.y + SKY + NAME_ROW);
+                buf.set_stringn(x, y, &label, width as usize, style.bold());
             }
         }
     }
@@ -166,6 +188,7 @@ pub fn greeting(frame: u32, theme: &Theme) -> Line<'static> {
 struct Palette {
     frosting: Color,
     strawberry: Color,
+    vanilla: Color,
     chocolate: Color,
 }
 
@@ -175,18 +198,21 @@ impl Palette {
             ColorDepth::TrueColor => Self {
                 frosting: Color::Rgb(255, 248, 240),
                 strawberry: Color::Rgb(255, 140, 180),
+                vanilla: Color::Rgb(245, 215, 140),
                 chocolate: Color::Rgb(120, 70, 40),
             },
             ColorDepth::Ansi256 => Self {
                 frosting: Color::Indexed(230),
                 strawberry: Color::Indexed(211),
+                vanilla: Color::Indexed(222),
                 chocolate: Color::Indexed(94),
             },
-            // 16 色里没有棕色，下层改成香草色
+            // 16 色里没有棕色，巧克力层用红色代替
             ColorDepth::Ansi16 => Self {
                 frosting: Color::White,
                 strawberry: Color::LightMagenta,
-                chocolate: Color::Yellow,
+                vanilla: Color::Yellow,
+                chocolate: Color::Red,
             },
             ColorDepth::None => return None,
         };
@@ -214,6 +240,7 @@ mod tests {
         Cake {
             frame,
             theme: &theme,
+            name: Some("Ada"),
         }
         .render(area, &mut buf);
         buf
@@ -223,6 +250,17 @@ mod tests {
     fn template_is_rectangular() {
         assert!(CAKE.iter().all(|row| row.len() == CAKE_WIDTH as usize));
         assert_eq!(HEIGHT, FRAMES as u16);
+    }
+
+    #[test]
+    fn name_label_spacing_and_fallback() {
+        assert_eq!(name_label("Ada").as_deref(), Some(" A d a "));
+        assert_eq!(name_label("小明").as_deref(), Some(" 小 明 "));
+        // 字母加空格放不下时去掉空格
+        let long = "Bartholomew Smithers";
+        assert_eq!(name_label(long), Some(format!(" {long} ")));
+        // 实在放不下
+        assert_eq!(name_label(&"长".repeat(16)), None);
     }
 
     #[test]

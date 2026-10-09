@@ -1,6 +1,7 @@
 //! Termino 终端入口：解析命令行、读取配置、初始化终端，运行固定步长的主循环。
 
 mod app;
+mod audio;
 mod config;
 mod input;
 mod keymap;
@@ -17,7 +18,7 @@ use ratatui::crossterm::event::{self, Event, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 
 use crate::app::App;
-use crate::config::{ColorSetting, Config};
+use crate::config::{Birthday, ColorSetting, Config};
 use crate::input::Input;
 use crate::keymap::{Command, Keymap};
 use crate::platform::ColorDepth;
@@ -81,7 +82,7 @@ fn main() -> ExitCode {
 
     let result = platform::init().and_then(|(terminal, caps)| {
         let input = Input::new(keymap, &config.timing, caps.key_release);
-        run(terminal, input, &theme)
+        run(terminal, input, &theme, &config.birthday)
     });
     platform::restore();
     match result {
@@ -95,8 +96,16 @@ fn fail(message: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-fn run(mut terminal: DefaultTerminal, mut input: Input, theme: &Theme) -> io::Result<()> {
-    let mut app = App::new(seed_from_clock()).with_best(storage::load());
+fn run(
+    mut terminal: DefaultTerminal,
+    mut input: Input,
+    theme: &Theme,
+    birthday: &Birthday,
+) -> io::Result<()> {
+    let mut app = App::new(seed_from_clock())
+        .with_best(storage::load())
+        .with_name(&birthday.name);
+    let mut music = Music::default();
     let mut next_tick = Instant::now() + TICK;
 
     while !app.should_quit() {
@@ -154,10 +163,31 @@ fn run(mut terminal: DefaultTerminal, mut input: Input, theme: &Theme) -> io::Re
             next_tick += TICK;
         }
         save_record(&mut app);
+        music.follow(app.cake().is_some() && birthday.sound);
     }
     // 退出时放弃的那一局也可能破了纪录
     save_record(&mut app);
     Ok(())
+}
+
+/// 彩蛋配乐：跟着彩蛋打开和关闭。
+#[derive(Default)]
+struct Music {
+    playing: Option<audio::Music>,
+    /// 本次彩蛋已经尝试过开始播放；没有音频设备时不会每帧重试。
+    tried: bool,
+}
+
+impl Music {
+    fn follow(&mut self, wanted: bool) {
+        if !wanted {
+            self.playing = None;
+            self.tried = false;
+        } else if !self.tried {
+            self.tried = true;
+            self.playing = audio::play_birthday();
+        }
+    }
 }
 
 fn save_record(app: &mut App) {

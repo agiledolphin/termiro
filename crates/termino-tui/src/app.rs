@@ -27,6 +27,8 @@ pub struct App {
     confirm: Option<Confirm>,
     /// 彩蛋动画已经播放的时间；`None` 表示没有在播放。
     cake: Option<Duration>,
+    /// 写在彩蛋蛋糕上的名字。
+    name: Option<String>,
     quit: bool,
     /// 自上一帧以来收到的动作，在下一个逻辑帧统一交给 core。
     pending: Vec<Action>,
@@ -53,6 +55,7 @@ impl App {
             paused: false,
             confirm: None,
             cake: None,
+            name: None,
             quit: false,
             pending: Vec::new(),
             banner: None,
@@ -62,6 +65,14 @@ impl App {
             unsaved: None,
             save_failed: false,
         }
+    }
+
+    /// 设置写在彩蛋蛋糕上的名字。去掉控制字符和首尾空白，空名字表示不写。
+    pub fn with_name(mut self, name: &str) -> Self {
+        let name: String = name.chars().filter(|c| !c.is_control()).collect();
+        let name = name.trim();
+        self.name = (!name.is_empty()).then(|| name.to_string());
+        self
     }
 
     /// 设置启动时读到的历史最高纪录。
@@ -130,8 +141,10 @@ impl App {
     fn restart(&mut self) {
         self.finish();
         let unsaved = self.unsaved.take();
+        let name = self.name.take();
         *self = Self::new(self.seed.wrapping_add(1)).with_best(self.best);
         self.unsaved = unsaved;
+        self.name = name;
         self.title = false;
     }
 
@@ -219,6 +232,10 @@ impl App {
         self.save_failed
     }
 
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
     /// 彩蛋动画已经播放的时间。
     pub fn cake(&self) -> Option<Duration> {
         self.cake
@@ -300,6 +317,16 @@ pub(crate) mod tests {
         app.handle(Command::Dismiss);
         assert_eq!(app.cake(), None);
         assert!(app.on_title());
+    }
+
+    #[test]
+    fn name_is_cleaned_and_survives_restart() {
+        assert_eq!(App::new(1).with_name("  \t ").name(), None);
+        let mut app = playing(1).with_name(" 小明\n ");
+        assert_eq!(app.name(), Some("小明"));
+        app.handle(Command::Restart);
+        app.handle(Command::Answer(true));
+        assert_eq!(app.name(), Some("小明"));
     }
 
     #[test]
