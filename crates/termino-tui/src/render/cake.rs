@@ -18,7 +18,7 @@ const FRAMES: u32 = 16;
 
 /// 蛋糕形状，每个字符代表一类格子：`*` 烛焰、`|` 蜡烛、`w` 奶油、
 /// `p` 草莓、`v` 香草、`c` 巧克力三层蛋糕胚、`=` 盘子，空格透明。
-const CAKE: [&str; 14] = [
+const CAKE: [&str; 15] = [
     "                 *                 ",
     "                 |                 ",
     "                 |                 ",
@@ -32,19 +32,20 @@ const CAKE: [&str; 14] = [
     " wccwwcwwwccwwwcwwccwwwcwwcwwwcccw ",
     " ccccccccccccccccccccccccccccccccc ",
     " ccccccccccccccccccccccccccccccccc ",
+    " ccccccccccccccccccccccccccccccccc ",
     "===================================",
 ];
 const CAKE_WIDTH: u16 = 35;
 /// 两侧和上方留给飘落彩纸的空间。
 const MARGIN: u16 = 4;
-const SKY: u16 = 2;
+const SKY: u16 = 1;
 pub const WIDTH: u16 = CAKE_WIDTH + 2 * MARGIN;
 /// 正好 16 行：彩纸每帧落一行，一轮落完一圈。
 pub const HEIGHT: u16 = CAKE.len() as u16 + SKY;
 
 const GREETING: &str = "HAPPY BIRTHDAY!";
-/// 名字写在最下层蛋糕胚的第一行，以第 17 列为中心；两侧各留一格不写。
-const NAME_ROW: u16 = 11;
+/// 名字写在最下层蛋糕胚三行的中间一行，以第 17 列为中心；两侧各留一格不写。
+const NAME_ROW: u16 = 12;
 const NAME_CENTER: u16 = 17;
 const NAME_MAX_WIDTH: usize = 31;
 
@@ -105,10 +106,12 @@ impl Widget for Cake<'_> {
             put(buf, area, x, y, symbol, self.theme.fg(color));
         }
 
+        let label = self.name.and_then(name_label);
         for (dy, row) in CAKE.iter().enumerate() {
             for (dx, part) in row.chars().enumerate() {
-                // 蛋糕胚上零星的糖粒
-                let sprinkle = (dx * 7 + dy * 5) % 9 == 0;
+                // 蛋糕胚上零星的糖粒；写名字的那一行不撒，免得挤在名字旁边
+                let name_row = label.is_some() && dy == NAME_ROW as usize;
+                let sprinkle = (dx * 7 + dy * 5) % 9 == 0 && !name_row;
                 let (symbol, style) = match (part, colors) {
                     (' ', _) => continue,
                     ('*', _) => {
@@ -155,7 +158,7 @@ impl Widget for Cake<'_> {
             }
         }
 
-        if let Some(label) = self.name.and_then(name_label) {
+        if let Some(label) = label {
             let width = Span::raw(label.as_str()).width() as u16;
             let x = MARGIN + NAME_CENTER - width / 2;
             let style = match colors {
