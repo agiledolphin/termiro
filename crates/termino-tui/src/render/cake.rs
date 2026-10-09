@@ -16,26 +16,27 @@ use crate::platform::ColorDepth;
 const FRAME_TIME: Duration = Duration::from_millis(150);
 const FRAMES: u32 = 16;
 
-/// 蛋糕形状，每个字符代表一类格子：`*` 烛焰、`|` 蜡烛、`w` 奶油、
+/// 蛋糕形状，每个字符代表一类格子：`<` `>` 烛焰左右两半、`|` 蜡烛、`w` 奶油、
 /// `p` 草莓、`v` 香草、`c` 巧克力三层蛋糕胚、`=` 盘子，空格透明。
+/// 宽度都取偶数，蜡烛占两列，这样偶数宽的名字（比如三个汉字加字间空格）能正好居中。
 const CAKE: [&str; 15] = [
-    "                 *                 ",
-    "                 |                 ",
-    "                 |                 ",
-    "          wwwwwwwwwwwwwww          ",
-    "          wpwwpwwwppwwpww          ",
-    "          ppppppppppppppp          ",
-    "     wwwwwwwwwwwwwwwwwwwwwwwww     ",
-    "     wvwwwvwwvvwwwvwwvwwwwvwwv     ",
-    "     vvvvvvvvvvvvvvvvvvvvvvvvv     ",
-    " wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww ",
-    " wccwwcwwwccwwwcwwccwwwcwwcwwwcccw ",
-    " ccccccccccccccccccccccccccccccccc ",
-    " ccccccccccccccccccccccccccccccccc ",
-    " ccccccccccccccccccccccccccccccccc ",
-    "===================================",
+    "                 <>                 ",
+    "                 ||                 ",
+    "                 ||                 ",
+    "           wwwwwwwwwwwwww           ",
+    "           wpwwpwwwppwwpw           ",
+    "           pppppppppppppp           ",
+    "      wwwwwwwwwwwwwwwwwwwwwwww      ",
+    "      wvwwwvwwvvwwwvwwvwwwwvwv      ",
+    "      vvvvvvvvvvvvvvvvvvvvvvvv      ",
+    " wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww ",
+    " wccwwcwwwccwwwcwwccwwwcwwcwwwcccww ",
+    " cccccccccccccccccccccccccccccccccc ",
+    " cccccccccccccccccccccccccccccccccc ",
+    " cccccccccccccccccccccccccccccccccc ",
+    "====================================",
 ];
-const CAKE_WIDTH: u16 = 35;
+const CAKE_WIDTH: u16 = 36;
 /// 两侧和上方留给飘落彩纸的空间。
 const MARGIN: u16 = 4;
 const SKY: u16 = 1;
@@ -44,17 +45,18 @@ pub const WIDTH: u16 = CAKE_WIDTH + 2 * MARGIN;
 pub const HEIGHT: u16 = CAKE.len() as u16 + SKY;
 
 const GREETING: &str = "HAPPY BIRTHDAY!";
-/// 名字写在最下层蛋糕胚三行的中间一行，以第 17 列为中心；两侧各留一格不写。
+/// 名字写在最下层蛋糕胚三行的中间一行，在这一层（第 1 到 34 列）里水平居中，两侧各留一格不写。
 const NAME_ROW: u16 = 12;
-const NAME_CENTER: u16 = 17;
-const NAME_MAX_WIDTH: usize = 31;
+const BOTTOM_TIER_LEFT: u16 = 1;
+const BOTTOM_TIER_WIDTH: u16 = 34;
+const NAME_MAX_WIDTH: usize = BOTTOM_TIER_WIDTH as usize - 2;
 
-/// 烛焰的四种形态，依次循环，看起来在跳动。
-const FLAMES: [(char, Color); 4] = [
-    ('^', Color::Yellow),
-    ('*', Color::LightYellow),
-    ('^', Color::LightRed),
-    ('\'', Color::Yellow),
+/// 烛焰的四种形态，依次循环，看起来在左右摇曳。
+const FLAMES: [(&str, Color); 4] = [
+    ("/\\", Color::Yellow),
+    ("/)", Color::LightYellow),
+    ("()", Color::LightRed),
+    ("(\\", Color::Yellow),
 ];
 const RAINBOW: [Color; 8] = [
     Color::Red,
@@ -114,8 +116,10 @@ impl Widget for Cake<'_> {
                 let sprinkle = (dx * 7 + dy * 5) % 9 == 0 && !name_row;
                 let (symbol, style) = match (part, colors) {
                     (' ', _) => continue,
-                    ('*', _) => {
-                        let (symbol, color) = FLAMES[frame % FLAMES.len()];
+                    ('<' | '>', _) => {
+                        let (shape, color) = FLAMES[frame % FLAMES.len()];
+                        let half = usize::from(part == '>');
+                        let symbol = shape.chars().nth(half).unwrap_or(' ');
                         (symbol, self.theme.fg(color).bold())
                     }
                     ('=', _) => ('=', self.theme.fg(Color::Gray)),
@@ -160,7 +164,7 @@ impl Widget for Cake<'_> {
 
         if let Some(label) = label {
             let width = Span::raw(label.as_str()).width() as u16;
-            let x = MARGIN + NAME_CENTER - width / 2;
+            let x = MARGIN + BOTTOM_TIER_LEFT + BOTTOM_TIER_WIDTH.saturating_sub(width) / 2;
             let style = match colors {
                 Some(palette) => Style::new().bg(palette.chocolate).fg(palette.frosting),
                 None => Style::new(),
@@ -264,6 +268,26 @@ mod tests {
         assert_eq!(name_label(long), Some(format!(" {long} ")));
         // 实在放不下
         assert_eq!(name_label(&"长".repeat(16)), None);
+    }
+
+    #[test]
+    fn even_width_name_is_exactly_centered() {
+        let area = Rect::new(0, 0, WIDTH, HEIGHT);
+        let mut buf = Buffer::empty(area);
+        let theme = Theme::new(ColorDepth::None, false);
+        Cake {
+            frame: 0,
+            theme: &theme,
+            name: Some("东西西"),
+        }
+        .render(area, &mut buf);
+        // 无颜色模式下巧克力层是 `#`，数名字两侧各有多少格
+        let y = SKY + NAME_ROW;
+        let tier = (MARGIN + BOTTOM_TIER_LEFT)..(MARGIN + BOTTOM_TIER_LEFT + BOTTOM_TIER_WIDTH);
+        let row: Vec<&str> = tier.map(|x| buf[(x, y)].symbol()).collect();
+        let left = row.iter().take_while(|s| **s == "#").count();
+        let right = row.iter().rev().take_while(|s| **s == "#").count();
+        assert_eq!(left, right, "{}", row.concat());
     }
 
     #[test]
