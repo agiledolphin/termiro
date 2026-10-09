@@ -20,6 +20,8 @@ pub enum Command {
     EasterEgg,
     /// 关闭彩蛋。
     Dismiss,
+    /// 彩蛋里按空格：吹蜡烛。
+    Blow,
 }
 
 #[derive(Clone, Debug)]

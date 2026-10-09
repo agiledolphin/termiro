@@ -25,6 +25,8 @@ pub struct Config {
 pub struct Birthday {
     /// 写在蛋糕上的名字，空字符串表示不写。
     pub name: String,
+    /// 年龄，1 到 99 时画成数字蜡烛；0 表示不显示。
+    pub age: u32,
     /// 是否播放生日歌。
     pub sound: bool,
 }
@@ -33,6 +35,7 @@ impl Default for Birthday {
     fn default() -> Self {
         Self {
             name: String::new(),
+            age: 0,
             sound: true,
         }
     }
@@ -185,8 +188,9 @@ mod tests {
 
     #[test]
     fn parses_birthday_settings() {
-        let config = Config::parse("[birthday]\nname = \"小明\"").unwrap();
+        let config = Config::parse("[birthday]\nname = \"小明\"\nage = 51").unwrap();
         assert_eq!(config.birthday.name, "小明");
+        assert_eq!(config.birthday.age, 51);
         assert!(config.birthday.sound);
     }
 

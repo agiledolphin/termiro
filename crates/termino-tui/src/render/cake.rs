@@ -1,5 +1,9 @@
-//! 彩蛋：生日蛋糕动画。在开始界面点击 TERMINO 标志打开，按任意键或点击关闭。
+//! 彩蛋：生日蛋糕动画。在开始界面点击 TERMINO 标志打开。
+//!
+//! 开场时盘子先摆好，三层蛋糕和蜡烛像俄罗斯方块一样依次落下堆好，蜡烛逐一点亮；
+//! 之后烛焰跳动、彩纸飘落，循环播放。按空格吹灭蜡烛：冒出青烟，随后放烟花。
 
+use std::ops::Range;
 use std::time::Duration;
 
 use ratatui::buffer::Buffer;
@@ -9,20 +13,17 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use super::theme::Theme;
+use crate::party::Stage;
 use crate::platform::ColorDepth;
 
-/// 每帧 150ms，16 帧一轮，约 2.4 秒循环一次。
-/// 所有动画的周期都是 16 帧的约数，循环时画面不会跳。
+/// 循环动画每帧 150ms，24 帧一轮（3.6 秒）。烛焰 4 帧、彩虹色 8 帧、彩纸和烟花 24 帧一个周期，
+/// 都能整除 24，循环时画面不会跳。
 const FRAME_TIME: Duration = Duration::from_millis(150);
-const FRAMES: u32 = 16;
+const FRAMES: u32 = 24;
 
-/// 蛋糕形状，每个字符代表一类格子：`<` `>` 烛焰左右两半、`|` 蜡烛、`w` 奶油、
-/// `p` 草莓、`v` 香草、`c` 巧克力三层蛋糕胚、`=` 盘子，空格透明。
-/// 宽度都取偶数，蜡烛占两列，这样偶数宽的名字（比如三个汉字加字间空格）能正好居中。
-const CAKE: [&str; 15] = [
-    "                 <>                 ",
-    "                 ||                 ",
-    "                 ||                 ",
+/// 三层蛋糕和盘子，从上到下。每个字符代表一类格子：`w` 奶油、`p` 草莓、`v` 香草、
+/// `c` 巧克力、`=` 盘子，空格透明。宽度都取偶数，偶数宽的名字和蜡烛能正好居中。
+const TIERS: [&str; 12] = [
     "           wwwwwwwwwwwwww           ",
     "           wpwwpwwwppwwpw           ",
     "           pppppppppppppp           ",
@@ -37,19 +38,48 @@ const CAKE: [&str; 15] = [
     "====================================",
 ];
 const CAKE_WIDTH: u16 = 36;
-/// 两侧和上方留给飘落彩纸的空间。
+/// 蛋糕两侧留给彩纸和烟花的空间。
 const MARGIN: u16 = 4;
-const SKY: u16 = 1;
 pub const WIDTH: u16 = CAKE_WIDTH + 2 * MARGIN;
-/// 正好 16 行：彩纸每帧落一行，一轮落完一圈。
-pub const HEIGHT: u16 = CAKE.len() as u16 + SKY;
+pub const HEIGHT: u16 = 20;
+/// TIERS 第一行在画面中的行：蛋糕贴着画面底部，上方留给蜡烛和烟花。
+const TIERS_TOP: u16 = HEIGHT - TIERS.len() as u16;
 
-const GREETING: &str = "HAPPY BIRTHDAY!";
-/// 名字写在最下层蛋糕胚三行的中间一行，在这一层（第 1 到 34 列）里水平居中，两侧各留一格不写。
-const NAME_ROW: u16 = 12;
+/// 开场时依次落下的部分：(在 TIERS 中的行, 开始落下的毫秒数)。盘子一开始就摆好。
+const PLATE: Range<usize> = 11..12;
+const LAYERS: [(Range<usize>, u64); 3] = [(6..11, 100), (3..6, 550), (0..3, 1000)];
+/// 蜡烛最后落下，然后逐一点亮。开场总长见 [`crate::party::INTRO`]。
+const CANDLES_DROP_MS: u64 = 1450;
+const DROP_MS: u64 = 400;
+const LIGHT_MS: u64 = 2000;
+const LIGHT_STEP_MS: u64 = 200;
+const _: () = assert!(CANDLES_DROP_MS + DROP_MS <= LIGHT_MS, "蜡烛要先落好再点亮");
+/// 吹灭蜡烛后，先冒烟，过一会儿开始放烟花。
+const SMOKE_FRAMES: i32 = 8;
+const FIREWORKS_DELAY: Duration = Duration::from_millis(900);
+
+/// 名字写在最下层蛋糕胚三行的中间一行（TIERS 第 9 行），在这一层（第 1 到 34 列）里水平居中，
+/// 两侧各留一格不写。
+const NAME_ROW: usize = 9;
 const BOTTOM_TIER_LEFT: u16 = 1;
 const BOTTOM_TIER_WIDTH: u16 = 34;
 const NAME_MAX_WIDTH: usize = BOTTOM_TIER_WIDTH as usize - 2;
+
+/// 数字蜡烛的 3×5 像素字，每个像素占 2 列；两根之间空 2 列。
+const DIGITS: [[&str; 5]; 10] = [
+    ["###", "#.#", "#.#", "#.#", "###"],
+    [".#.", "##.", ".#.", ".#.", "###"],
+    ["###", "..#", "###", "#..", "###"],
+    ["###", "..#", "###", "..#", "###"],
+    ["#.#", "#.#", "###", "..#", "..#"],
+    ["###", "#..", "###", "..#", "###"],
+    ["###", "#..", "###", "#.#", "###"],
+    ["###", "..#", ".#.", ".#.", ".#."],
+    ["###", "#.#", "###", "#.#", "###"],
+    ["###", "#.#", "###", "..#", "###"],
+];
+const DIGIT_WIDTH: u16 = 6;
+const DIGIT_GAP: u16 = 2;
 
 /// 烛焰的四种形态，依次循环，看起来在左右摇曳。
 const FLAMES: [(&str, Color); 4] = [
@@ -68,24 +98,46 @@ const RAINBOW: [Color; 8] = [
     Color::Magenta,
     Color::LightMagenta,
 ];
-/// 蜡烛是这个颜色和奶油色相间的条纹。
-const CANDLE: Color = Color::LightBlue;
+/// 普通蜡烛是这个颜色和奶油色相间的条纹。
+const STRIPE: Color = Color::LightBlue;
 const CONFETTI: [char; 4] = ['*', 'o', '+', '.'];
 const CONFETTI_COUNT: u16 = 14;
+/// 烟花：(中心列, 中心行, 在一轮中绽放的帧, 颜色)。画在蛋糕两侧的空处。
+const BURSTS: [(i32, i32, u32, Color); 4] = [
+    (6, 5, 0, Color::LightRed),
+    (37, 4, 6, Color::Yellow),
+    (8, 2, 12, Color::Cyan),
+    (36, 8, 18, Color::LightMagenta),
+];
+const BURST_DIRECTIONS: [(i32, i32); 8] = [
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-1, 0),
+    (1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+];
 
-/// 动画播放了 `elapsed` 之后应显示的帧。
-pub fn frame_at(elapsed: Duration) -> u32 {
-    (elapsed.as_millis() / FRAME_TIME.as_millis() % u128::from(FRAMES)) as u32
+const GREETING: &str = "HAPPY BIRTHDAY!";
+const WISH: &str = "MAKE A WISH!";
+
+/// 循环动画在 `t` 时应显示的帧。
+fn frame_at(t: Duration) -> u32 {
+    (t.as_millis() / FRAME_TIME.as_millis() % u128::from(FRAMES)) as u32
 }
 
-/// 蛋糕和飘落的彩纸，需要 [`WIDTH`]×[`HEIGHT`] 的区域。
+/// 蛋糕和周围的特效，需要 [`WIDTH`]×[`HEIGHT`] 的区域。
 pub struct Cake<'a> {
-    pub frame: u32,
+    pub stage: Stage,
     pub theme: &'a Theme,
     pub name: Option<&'a str>,
+    /// 1 到 99 时画成数字蜡烛，否则是一根普通蜡烛。
+    pub age: Option<u8>,
 }
 
-/// 写在蛋糕上的名字：放得下时字母之间加空格，像奶油裱字；再放不下就返回 `None`，
+/// 写在蛋糕上的名字：放得下时字之间加空格，像奶油裱字；再放不下就返回 `None`，
 /// 由调用方改放在祝福语下方。
 pub fn name_label(name: &str) -> Option<String> {
     let spaced: String = name.chars().map(String::from).collect::<Vec<_>>().join(" ");
@@ -94,37 +146,161 @@ pub fn name_label(name: &str) -> Option<String> {
         .find(|label| Span::raw(label.as_str()).width() <= NAME_MAX_WIDTH)
 }
 
+/// 祝福语：开场时不显示，点燃时是 `HAPPY BIRTHDAY!`，吹灭后是 `MAKE A WISH!`，颜色随帧流动。
+pub fn greeting(stage: Stage, theme: &Theme) -> Option<Line<'static>> {
+    let (text, frame) = match stage {
+        Stage::Stacking(_) => return None,
+        Stage::Lit(t) => (GREETING, frame_at(t)),
+        Stage::Blown(t) => (WISH, frame_at(t)),
+    };
+    let spans: Vec<Span> = text
+        .chars()
+        .enumerate()
+        .map(|(i, letter)| {
+            let color = RAINBOW[(i + frame as usize) % RAINBOW.len()];
+            Span::styled(letter.to_string(), theme.fg(color).bold())
+        })
+        .collect();
+    Some(Line::from(spans))
+}
+
+/// 蜡烛的格子和烛焰位置。x 是蛋糕内的列，y 是画面行。
+struct Candles {
+    cells: Vec<(u16, u16, CandleCell)>,
+    /// 每簇烛焰左半边的位置，烛焰占两列。
+    flames: Vec<(u16, u16)>,
+    top: u16,
+}
+
+#[derive(Clone, Copy)]
+enum CandleCell {
+    /// 普通蜡烛的条纹，`true` 为彩色段。
+    Stripe(bool),
+    Digit,
+}
+
+impl Candles {
+    fn new(age: Option<u8>) -> Self {
+        let bottom = TIERS_TOP - 1;
+        let mut cells = Vec::new();
+        let mut flames = Vec::new();
+        match age.filter(|age| (1..=99).contains(age)) {
+            Some(age) => {
+                let digits: Vec<usize> = age
+                    .to_string()
+                    .bytes()
+                    .map(|b| usize::from(b - b'0'))
+                    .collect();
+                let count = digits.len() as u16;
+                let width = count * DIGIT_WIDTH + (count - 1) * DIGIT_GAP;
+                let top = bottom - 4;
+                let mut left = (CAKE_WIDTH - width) / 2;
+                for digit in digits {
+                    for (dy, row) in DIGITS[digit].iter().enumerate() {
+                        for (dx, pixel) in row.chars().enumerate() {
+                            if pixel == '#' {
+                                let x = left + dx as u16 * 2;
+                                cells.push((x, top + dy as u16, CandleCell::Digit));
+                                cells.push((x + 1, top + dy as u16, CandleCell::Digit));
+                            }
+                        }
+                    }
+                    flames.push((left + DIGIT_WIDTH / 2 - 1, top - 1));
+                    left += DIGIT_WIDTH + DIGIT_GAP;
+                }
+                Self { cells, flames, top }
+            }
+            None => {
+                let center = CAKE_WIDTH / 2 - 1;
+                for y in bottom - 1..=bottom {
+                    let colored = (bottom - y) % 2 == 1;
+                    cells.push((center, y, CandleCell::Stripe(colored)));
+                    cells.push((center + 1, y, CandleCell::Stripe(colored)));
+                }
+                flames.push((center, bottom - 2));
+                Self {
+                    cells,
+                    flames,
+                    top: bottom - 1,
+                }
+            }
+        }
+    }
+}
+
+/// 开场时某部分落下的位移（行数，负数表示还在上方）。还没开始落下时为 `None`。
+/// 每次落一整行，看起来像方块在下落。
+fn drop_shift(ms: u64, start: u64, final_top: u16, height: u16) -> Option<i32> {
+    if ms < start {
+        return None;
+    }
+    let distance = i32::from(final_top + height);
+    let fallen = distance * (ms - start).min(DROP_MS) as i32 / DROP_MS as i32;
+    Some(fallen - distance)
+}
+
 impl Widget for Cake<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let frame = self.frame as usize;
-        let colors = Palette::new(self.theme.depth());
+        // 区域不够高时裁掉上方的天空，保证蛋糕底部完整
+        let skip = HEIGHT.saturating_sub(area.height);
+        let mut canvas = Canvas { buf, area, skip };
+        let palette = Palette::new(self.theme.depth());
+        // 开场经过的毫秒数；开场结束后视为所有部分都已落好
+        let (ms, frame) = match self.stage {
+            Stage::Stacking(t) => (t.as_millis() as u64, 0),
+            Stage::Lit(t) | Stage::Blown(t) => (u64::MAX, frame_at(t)),
+        };
 
-        // 先撒彩纸，再把蛋糕画在上面
-        for i in 0..CONFETTI_COUNT {
-            let x = (i * 29 + 3) % WIDTH;
-            let y = (i * 7 + self.frame as u16) % HEIGHT;
-            let color = RAINBOW[(i as usize + frame / 2) % RAINBOW.len()];
-            let symbol = CONFETTI[i as usize % CONFETTI.len()];
-            put(buf, area, x, y, symbol, self.theme.fg(color));
+        match self.stage {
+            Stage::Lit(_) => self.confetti(&mut canvas, frame),
+            Stage::Blown(t) if t >= FIREWORKS_DELAY => {
+                self.fireworks(&mut canvas, frame_at(t - FIREWORKS_DELAY))
+            }
+            _ => {}
         }
 
         let label = self.name.and_then(name_label);
-        for (dy, row) in CAKE.iter().enumerate() {
-            for (dx, part) in row.chars().enumerate() {
+        self.tiers(&mut canvas, PLATE, 0, frame, palette, label.is_some());
+        for (rows, start) in LAYERS {
+            let top = TIERS_TOP + rows.start as u16;
+            let Some(shift) = drop_shift(ms, start, top, rows.len() as u16) else {
+                continue;
+            };
+            let has_name = rows.contains(&NAME_ROW);
+            self.tiers(&mut canvas, rows, shift, frame, palette, label.is_some());
+            if let (true, Some(label)) = (has_name, &label) {
+                self.name(&mut canvas, label, shift, palette);
+            }
+        }
+
+        let candles = Candles::new(self.age);
+        let height = TIERS_TOP - candles.top;
+        if let Some(shift) = drop_shift(ms, CANDLES_DROP_MS, candles.top, height) {
+            self.candles(&mut canvas, &candles, shift, frame, palette);
+        }
+        self.flames(&mut canvas, &candles, ms, frame);
+    }
+}
+
+impl Cake<'_> {
+    fn tiers(
+        &self,
+        canvas: &mut Canvas,
+        rows: Range<usize>,
+        shift: i32,
+        frame: u32,
+        palette: Option<Palette>,
+        has_name: bool,
+    ) {
+        let frame = frame as usize;
+        for dy in rows {
+            for (dx, part) in TIERS[dy].chars().enumerate() {
                 // 蛋糕胚上零星的糖粒；写名字的那一行不撒，免得挤在名字旁边
-                let name_row = label.is_some() && dy == NAME_ROW as usize;
-                let sprinkle = (dx * 7 + dy * 5) % 9 == 0 && !name_row;
-                let (symbol, style) = match (part, colors) {
+                let sprinkle = (dx * 7 + dy * 5) % 9 == 0 && !(has_name && dy == NAME_ROW);
+                let (symbol, style) = match (part, palette) {
                     (' ', _) => continue,
-                    ('<' | '>', _) => {
-                        let (shape, color) = FLAMES[frame % FLAMES.len()];
-                        let half = usize::from(part == '>');
-                        let symbol = shape.chars().nth(half).unwrap_or(' ');
-                        (symbol, self.theme.fg(color).bold())
-                    }
                     ('=', _) => ('=', self.theme.fg(Color::Gray)),
                     // 无颜色时用字符画
-                    ('|', None) => ('|', Style::new()),
                     ('w', None) => ('~', Style::new()),
                     ('p' | 'v' | 'c', None) if sprinkle => {
                         (if (frame + dx) % 4 < 2 { 'o' } else { '.' }, Style::new())
@@ -132,15 +308,7 @@ impl Widget for Cake<'_> {
                     ('p', None) => (':', Style::new()),
                     ('v', None) => ('%', Style::new()),
                     ('c', None) => ('#', Style::new()),
-                    // 有颜色时用背景色填充；蜡烛是彩色和白色相间的条纹
-                    ('|', Some(palette)) => {
-                        let color = if dy % 2 == 1 {
-                            CANDLE
-                        } else {
-                            palette.frosting
-                        };
-                        (' ', Style::new().bg(color))
-                    }
+                    // 有颜色时用背景色填充
                     ('w', Some(palette)) => (' ', Style::new().bg(palette.frosting)),
                     ('p' | 'v' | 'c', Some(palette)) => {
                         let base = match part {
@@ -157,37 +325,112 @@ impl Widget for Cake<'_> {
                     }
                     _ => continue,
                 };
-                let (x, y) = (MARGIN + dx as u16, SKY + dy as u16);
-                put(buf, area, x, y, symbol, style);
-            }
-        }
-
-        if let Some(label) = label {
-            let width = Span::raw(label.as_str()).width() as u16;
-            let x = MARGIN + BOTTOM_TIER_LEFT + BOTTOM_TIER_WIDTH.saturating_sub(width) / 2;
-            let style = match colors {
-                Some(palette) => Style::new().bg(palette.chocolate).fg(palette.frosting),
-                None => Style::new(),
-            };
-            if x + width <= area.width && SKY + NAME_ROW < area.height {
-                let (x, y) = (area.x + x, area.y + SKY + NAME_ROW);
-                buf.set_stringn(x, y, &label, width as usize, style.bold());
+                let y = i32::from(TIERS_TOP) + dy as i32 + shift;
+                canvas.put(i32::from(MARGIN) + dx as i32, y, symbol, style);
             }
         }
     }
-}
 
-/// 彩虹色的 `HAPPY BIRTHDAY!`，颜色随帧流动。
-pub fn greeting(frame: u32, theme: &Theme) -> Line<'static> {
-    let spans: Vec<Span> = GREETING
-        .chars()
-        .enumerate()
-        .map(|(i, letter)| {
-            let color = RAINBOW[(i + frame as usize) % RAINBOW.len()];
-            Span::styled(letter.to_string(), theme.fg(color).bold())
-        })
-        .collect();
-    Line::from(spans)
+    fn name(&self, canvas: &mut Canvas, label: &str, shift: i32, palette: Option<Palette>) {
+        let width = Span::raw(label).width() as u16;
+        let x = MARGIN + BOTTOM_TIER_LEFT + BOTTOM_TIER_WIDTH.saturating_sub(width) / 2;
+        let y = i32::from(TIERS_TOP) + NAME_ROW as i32 + shift;
+        let style = match palette {
+            Some(palette) => Style::new().bg(palette.chocolate).fg(palette.frosting),
+            None => Style::new(),
+        };
+        canvas.text(x, y, label, style.bold());
+    }
+
+    fn candles(
+        &self,
+        canvas: &mut Canvas,
+        candles: &Candles,
+        shift: i32,
+        frame: u32,
+        palette: Option<Palette>,
+    ) {
+        for &(x, y, cell) in &candles.cells {
+            // 数字蜡烛上闪烁的亮片
+            let glitter = (u32::from(x) * 3 + u32::from(y) * 5 + frame) % 11 == 0;
+            let (symbol, style) = match (cell, palette) {
+                (CandleCell::Stripe(_), None) => ('|', Style::new()),
+                (CandleCell::Digit, None) => ('@', Style::new()),
+                (CandleCell::Stripe(colored), Some(palette)) => {
+                    let color = if colored { STRIPE } else { palette.frosting };
+                    (' ', Style::new().bg(color))
+                }
+                (CandleCell::Digit, Some(palette)) if glitter => {
+                    ('.', Style::new().bg(palette.gold).fg(Color::White).bold())
+                }
+                (CandleCell::Digit, Some(palette)) => (' ', Style::new().bg(palette.gold)),
+            };
+            canvas.put(i32::from(MARGIN + x), i32::from(y) + shift, symbol, style);
+        }
+    }
+
+    /// 开场时蜡烛逐一点亮，点燃后跳动，吹灭后冒烟。
+    fn flames(&self, canvas: &mut Canvas, candles: &Candles, ms: u64, frame: u32) {
+        for (i, &(x, y)) in candles.flames.iter().enumerate() {
+            let (x, y) = (i32::from(MARGIN + x), i32::from(y));
+            match self.stage {
+                Stage::Stacking(_) if ms < LIGHT_MS + i as u64 * LIGHT_STEP_MS => {}
+                Stage::Stacking(_) | Stage::Lit(_) => {
+                    let (shape, color) = FLAMES[(frame as usize + i) % FLAMES.len()];
+                    canvas.text(x as u16, y, shape, self.theme.fg(color).bold());
+                }
+                Stage::Blown(t) => {
+                    // 一缕青烟左右摆动着往上飘，几帧后散去
+                    let age = (t.as_millis() / FRAME_TIME.as_millis()) as i32;
+                    if age >= SMOKE_FRAMES {
+                        continue;
+                    }
+                    for j in 0..=age.min(3) {
+                        let symbol = if (j + age) % 2 == 0 { '(' } else { ')' };
+                        let style = self.theme.fg(Color::Gray).dim();
+                        canvas.put(x + j % 2, y - j - age / 3, symbol, style);
+                    }
+                }
+            }
+        }
+    }
+
+    fn confetti(&self, canvas: &mut Canvas, frame: u32) {
+        for i in 0..CONFETTI_COUNT {
+            let x = i32::from((i * 29 + 3) % WIDTH);
+            // 一轮 24 帧落下 24 行，比画面高，循环时从顶上重新出现
+            let y = ((u32::from(i) * 7 + frame) % FRAMES) as i32;
+            let color = RAINBOW[(i as usize + frame as usize / 2) % RAINBOW.len()];
+            let symbol = CONFETTI[i as usize % CONFETTI.len()];
+            canvas.put(x, y, symbol, self.theme.fg(color));
+        }
+    }
+
+    /// 烟花从中心绽开，扩散成一圈后淡去。
+    fn fireworks(&self, canvas: &mut Canvas, frame: u32) {
+        for &(cx, cy, start, color) in &BURSTS {
+            let age = (frame + FRAMES - start) % FRAMES;
+            let (radius, symbol) = match age {
+                0 => (0, '*'),
+                1 => (1, '+'),
+                2 => (2, '*'),
+                3 | 4 => (3, '.'),
+                _ => continue,
+            };
+            let mut style = self.theme.fg(color).bold();
+            if age >= 4 {
+                style = self.theme.fg(color).dim();
+            }
+            if radius == 0 {
+                canvas.put(cx, cy, symbol, style);
+                continue;
+            }
+            for (dx, dy) in BURST_DIRECTIONS {
+                // 横向距离加倍，终端字符瘦长，这样烟花看起来是圆的
+                canvas.put(cx + dx * 2 * radius, cy + dy * radius, symbol, style);
+            }
+        }
+    }
 }
 
 /// 蛋糕的填充色；无颜色模式下没有。
@@ -197,6 +440,8 @@ struct Palette {
     strawberry: Color,
     vanilla: Color,
     chocolate: Color,
+    /// 数字蜡烛的金色。
+    gold: Color,
 }
 
 impl Palette {
@@ -207,12 +452,14 @@ impl Palette {
                 strawberry: Color::Rgb(255, 140, 180),
                 vanilla: Color::Rgb(245, 215, 140),
                 chocolate: Color::Rgb(120, 70, 40),
+                gold: Color::Rgb(255, 196, 40),
             },
             ColorDepth::Ansi256 => Self {
                 frosting: Color::Indexed(230),
                 strawberry: Color::Indexed(211),
                 vanilla: Color::Indexed(222),
                 chocolate: Color::Indexed(94),
+                gold: Color::Indexed(214),
             },
             // 16 色里没有棕色，巧克力层用红色代替
             ColorDepth::Ansi16 => Self {
@@ -220,6 +467,7 @@ impl Palette {
                 strawberry: Color::LightMagenta,
                 vanilla: Color::Yellow,
                 chocolate: Color::Red,
+                gold: Color::LightYellow,
             },
             ColorDepth::None => return None,
         };
@@ -227,43 +475,82 @@ impl Palette {
     }
 }
 
-fn put(buf: &mut Buffer, area: Rect, x: u16, y: u16, symbol: char, style: Style) {
-    if x >= area.width || y >= area.height {
-        return;
+/// 按区域内坐标写格子，超出区域的部分直接忽略；坐标可以是负数（还在画面上方）。
+struct Canvas<'a> {
+    buf: &'a mut Buffer,
+    area: Rect,
+    /// 画面顶部被裁掉的行数。
+    skip: u16,
+}
+
+impl Canvas<'_> {
+    fn put(&mut self, x: i32, y: i32, symbol: char, style: Style) {
+        let y = y - i32::from(self.skip);
+        let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y)) else {
+            return;
+        };
+        if x >= self.area.width || y >= self.area.height {
+            return;
+        }
+        if let Some(cell) = self.buf.cell_mut((self.area.x + x, self.area.y + y)) {
+            cell.set_char(symbol).set_style(style);
+        }
     }
-    if let Some(cell) = buf.cell_mut((area.x + x, area.y + y)) {
-        cell.set_char(symbol).set_style(style);
+
+    fn text(&mut self, x: u16, y: i32, text: &str, style: Style) {
+        let Ok(y) = u16::try_from(y - i32::from(self.skip)) else {
+            return;
+        };
+        if y >= self.area.height || x >= self.area.width {
+            return;
+        }
+        let max = usize::from(self.area.width - x);
+        self.buf
+            .set_stringn(self.area.x + x, self.area.y + y, text, max, style);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::party::INTRO;
 
-    fn render(frame: u32, depth: ColorDepth) -> Buffer {
+    fn render(stage: Stage, depth: ColorDepth, name: Option<&str>, age: Option<u8>) -> Buffer {
         let area = Rect::new(0, 0, WIDTH, HEIGHT);
         let mut buf = Buffer::empty(area);
         let theme = Theme::new(depth, false);
         Cake {
-            frame,
+            stage,
             theme: &theme,
-            name: Some("Ada"),
+            name,
+            age,
         }
         .render(area, &mut buf);
         buf
     }
 
+    fn count(buf: &Buffer, symbol: &str) -> usize {
+        buf.content()
+            .iter()
+            .filter(|c| c.symbol() == symbol)
+            .count()
+    }
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
     #[test]
-    fn template_is_rectangular() {
-        assert!(CAKE.iter().all(|row| row.len() == CAKE_WIDTH as usize));
-        assert_eq!(HEIGHT, FRAMES as u16);
+    fn templates_fit() {
+        assert!(TIERS.iter().all(|row| row.len() == CAKE_WIDTH as usize));
+        assert!(INTRO >= ms(LIGHT_MS + LIGHT_STEP_MS));
     }
 
     #[test]
     fn name_label_spacing_and_fallback() {
         assert_eq!(name_label("Ada").as_deref(), Some(" A d a "));
         assert_eq!(name_label("小明").as_deref(), Some(" 小 明 "));
-        // 字母加空格放不下时去掉空格
+        // 字加空格放不下时去掉空格
         let long = "Bartholomew Smithers";
         assert_eq!(name_label(long), Some(format!(" {long} ")));
         // 实在放不下
@@ -272,38 +559,98 @@ mod tests {
 
     #[test]
     fn even_width_name_is_exactly_centered() {
-        let area = Rect::new(0, 0, WIDTH, HEIGHT);
+        let buf = render(Stage::Lit(ms(0)), ColorDepth::None, Some("东西西"), None);
+        // 无颜色模式下巧克力层是 `#`，数名字两侧各有多少格
+        let y = TIERS_TOP + NAME_ROW as u16;
+        let left = MARGIN + BOTTOM_TIER_LEFT;
+        let row: Vec<&str> = (left..left + BOTTOM_TIER_WIDTH)
+            .map(|x| buf[(x, y)].symbol())
+            .collect();
+        let before = row.iter().take_while(|s| **s == "#").count();
+        let after = row.iter().rev().take_while(|s| **s == "#").count();
+        assert_eq!(before, after, "{}", row.concat());
+    }
+
+    #[test]
+    fn age_becomes_digit_candles() {
+        let pixels = |digit: usize| {
+            DIGITS[digit]
+                .iter()
+                .map(|row| row.matches('#').count())
+                .sum::<usize>()
+                * 2
+        };
+        let buf = render(Stage::Lit(ms(0)), ColorDepth::None, None, Some(51));
+        assert_eq!(count(&buf, "@"), pixels(5) + pixels(1));
+        // 两根数字蜡烛各有一簇烛焰
+        assert_eq!(count(&buf, "/"), 2);
+        // 没有年龄时是一根普通蜡烛
+        let plain = render(Stage::Lit(ms(0)), ColorDepth::None, None, None);
+        assert_eq!(count(&plain, "@"), 0);
+        assert_eq!(count(&plain, "|"), 4);
+    }
+
+    #[test]
+    fn intro_stacks_the_cake_then_lights_candles() {
+        let stage = |t| render(Stage::Stacking(ms(t)), ColorDepth::None, None, Some(51));
+        // 一开始只有盘子
+        let start = stage(0);
+        assert_eq!(count(&start, "="), CAKE_WIDTH as usize);
+        assert_eq!(
+            count(&start, "#") + count(&start, "%") + count(&start, "@"),
+            0
+        );
+        // 蛋糕都落好、蜡烛还没点
+        let stacked = stage(LIGHT_MS - 1);
+        assert!(count(&stacked, "#") > 0 && count(&stacked, "@") > 0);
+        assert_eq!(count(&stacked, "/"), 0);
+        // 逐一点亮
+        assert_eq!(count(&stage(LIGHT_MS), "/"), 1);
+        assert_eq!(count(&stage(LIGHT_MS + LIGHT_STEP_MS), "/"), 2);
+    }
+
+    #[test]
+    fn short_area_drops_sky_not_plate() {
+        let area = Rect::new(0, 0, WIDTH, HEIGHT - 2);
         let mut buf = Buffer::empty(area);
         let theme = Theme::new(ColorDepth::None, false);
+        let stage = Stage::Lit(ms(0));
         Cake {
-            frame: 0,
+            stage,
             theme: &theme,
-            name: Some("东西西"),
+            name: None,
+            age: Some(51),
         }
         .render(area, &mut buf);
-        // 无颜色模式下巧克力层是 `#`，数名字两侧各有多少格
-        let y = SKY + NAME_ROW;
-        let tier = (MARGIN + BOTTOM_TIER_LEFT)..(MARGIN + BOTTOM_TIER_LEFT + BOTTOM_TIER_WIDTH);
-        let row: Vec<&str> = tier.map(|x| buf[(x, y)].symbol()).collect();
-        let left = row.iter().take_while(|s| **s == "#").count();
-        let right = row.iter().rev().take_while(|s| **s == "#").count();
-        assert_eq!(left, right, "{}", row.concat());
+        assert_eq!(buf[(MARGIN, HEIGHT - 3)].symbol(), "=");
     }
 
     #[test]
-    fn frames_loop() {
-        assert_eq!(frame_at(Duration::ZERO), 0);
-        assert_eq!(frame_at(FRAME_TIME * 3 + FRAME_TIME / 2), 3);
-        assert_eq!(frame_at(FRAME_TIME * FRAMES), 0);
-    }
-
-    #[test]
-    fn animation_moves_and_loops_seamlessly() {
+    fn loops_are_seamless() {
+        let cycle = FRAME_TIME * FRAMES;
         for depth in [ColorDepth::TrueColor, ColorDepth::None] {
-            assert_ne!(render(0, depth), render(1, depth));
-            for frame in 0..FRAMES {
-                assert_eq!(render(frame, depth), render(frame + FRAMES, depth));
+            for k in 0..FRAMES {
+                let t = ms(2000) + FRAME_TIME * k;
+                for stage in [Stage::Lit, Stage::Blown] {
+                    let a = render(stage(t), depth, Some("Ada"), Some(51));
+                    let b = render(stage(t + cycle), depth, Some("Ada"), Some(51));
+                    assert_eq!(a, b);
+                }
             }
+            let lit = |t| render(Stage::Lit(t), depth, None, Some(51));
+            assert_ne!(lit(ms(0)), lit(FRAME_TIME));
         }
+    }
+
+    #[test]
+    fn blowing_out_makes_smoke_then_fireworks() {
+        let blown = |t| render(Stage::Blown(t), ColorDepth::None, None, Some(51));
+        let smoke = blown(FRAME_TIME * 2);
+        assert_eq!(count(&smoke, "/"), 0, "吹灭后不再有烛焰");
+        assert!(count(&smoke, "(") + count(&smoke, ")") > 0);
+        // 烟散了以后放烟花：第一朵在第 0 帧绽放，中心是 `*`
+        let fireworks = blown(FIREWORKS_DELAY);
+        let (cx, cy, _, _) = BURSTS[0];
+        assert_eq!(fireworks[(cx as u16, cy as u16)].symbol(), "*");
     }
 }

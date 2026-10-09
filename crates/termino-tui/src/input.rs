@@ -129,19 +129,21 @@ impl Input {
         }
     }
 
-    /// 彩蛋播放时的按键处理：按任意键关闭。
-    pub fn dismiss_key(&mut self, key: KeyEvent) -> Option<Command> {
+    /// 彩蛋播放时的按键处理：空格或 Enter 吹蜡烛，Esc 或 Q 关闭，其它键忽略。
+    /// 不经过按键配置。
+    pub fn party_key(&mut self, key: KeyEvent) -> Option<Command> {
         self.release_all();
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        let ctrl_c =
-            key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
-        Some(if ctrl_c {
-            Command::ForceQuit
-        } else {
-            Command::Dismiss
-        })
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return (key.code == KeyCode::Char('c')).then_some(Command::ForceQuit);
+        }
+        match normalize(key.code) {
+            KeyCode::Char(' ') | KeyCode::Enter => Some(Command::Blow),
+            KeyCode::Esc | KeyCode::Char('q') => Some(Command::Dismiss),
+            _ => None,
+        }
     }
 
     /// 推进 `dt`，返回长按连发产生的动作。
@@ -359,20 +361,23 @@ mod tests {
     }
 
     #[test]
-    fn any_key_dismisses() {
+    fn party_keys() {
         let mut input = native(100, 50, 33);
-        for code in [KeyCode::Esc, KeyCode::Char('q'), KeyCode::Char('?')] {
-            assert_eq!(
-                input.dismiss_key(event(code, KeyEventKind::Press)),
-                Some(Command::Dismiss)
-            );
-        }
+        let press = |input: &mut Input, code| input.party_key(event(code, KeyEventKind::Press));
+        assert_eq!(press(&mut input, KeyCode::Char(' ')), Some(Command::Blow));
+        assert_eq!(press(&mut input, KeyCode::Enter), Some(Command::Blow));
+        assert_eq!(press(&mut input, KeyCode::Esc), Some(Command::Dismiss));
         assert_eq!(
-            input.dismiss_key(event(KeyCode::Esc, KeyEventKind::Release)),
+            press(&mut input, KeyCode::Char('Q')),
+            Some(Command::Dismiss)
+        );
+        assert_eq!(press(&mut input, KeyCode::Left), None);
+        assert_eq!(
+            input.party_key(event(KeyCode::Char(' '), KeyEventKind::Release)),
             None
         );
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(input.dismiss_key(ctrl_c), Some(Command::ForceQuit));
+        assert_eq!(input.party_key(ctrl_c), Some(Command::ForceQuit));
     }
 
     #[test]

@@ -38,5 +38,7 @@ ascii = false
 [birthday]
 # Name to show with it. Leave empty for none.
 name = ""
+# Age to show with it, from 1 to 99. 0 for none.
+age = 0
 # Play music with it.
 sound = true

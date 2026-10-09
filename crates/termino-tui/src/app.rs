@@ -3,6 +3,7 @@ use std::time::Duration;
 use termino_core::{Action, Clear, Event, Game, GameView, Rules};
 
 use crate::keymap::Command;
+use crate::party::Party;
 use crate::storage::Record;
 
 /// 需要玩家确认的操作。
@@ -25,10 +26,12 @@ pub struct App {
     paused: bool,
     /// 正在等待玩家确认的操作；期间游戏不计时。
     confirm: Option<Confirm>,
-    /// 彩蛋动画已经播放的时间；`None` 表示没有在播放。
-    cake: Option<Duration>,
+    /// 彩蛋的播放进度；`None` 表示没有在播放。
+    party: Option<Party>,
     /// 写在彩蛋蛋糕上的名字。
     name: Option<String>,
+    /// 彩蛋数字蜡烛上的年龄。
+    age: Option<u8>,
     quit: bool,
     /// 自上一帧以来收到的动作，在下一个逻辑帧统一交给 core。
     pending: Vec<Action>,
@@ -54,8 +57,9 @@ impl App {
             title: true,
             paused: false,
             confirm: None,
-            cake: None,
+            party: None,
             name: None,
+            age: None,
             quit: false,
             pending: Vec::new(),
             banner: None,
@@ -75,6 +79,12 @@ impl App {
         self
     }
 
+    /// 设置彩蛋数字蜡烛上的年龄；不在 1 到 99 之间时不显示。
+    pub fn with_age(mut self, age: u32) -> Self {
+        self.age = u8::try_from(age).ok().filter(|age| (1..=99).contains(age));
+        self
+    }
+
     /// 设置启动时读到的历史最高纪录。
     pub fn with_best(mut self, best: Option<Record>) -> Self {
         self.best = best;
@@ -87,9 +97,11 @@ impl App {
             self.quit = true;
             return;
         }
-        if self.cake.is_some() {
-            if command == Command::Dismiss {
-                self.cake = None;
+        if let Some(party) = &mut self.party {
+            match command {
+                Command::Dismiss => self.party = None,
+                Command::Blow => party.blow(),
+                _ => {}
             }
             return;
         }
@@ -121,7 +133,7 @@ impl App {
             match command {
                 // 这次按键只用来开始，不会把第一个方块砸下去
                 Command::Game(Action::HardDrop) => self.title = false,
-                Command::EasterEgg => self.cake = Some(Duration::ZERO),
+                Command::EasterEgg => self.party = Some(Party::default()),
                 _ => {}
             }
             return;
@@ -141,10 +153,11 @@ impl App {
     fn restart(&mut self) {
         self.finish();
         let unsaved = self.unsaved.take();
-        let name = self.name.take();
+        let (name, age) = (self.name.take(), self.age);
         *self = Self::new(self.seed.wrapping_add(1)).with_best(self.best);
         self.unsaved = unsaved;
         self.name = name;
+        self.age = age;
         self.title = false;
     }
 
@@ -175,8 +188,8 @@ impl App {
     }
 
     pub fn tick(&mut self, dt: Duration) {
-        if let Some(elapsed) = &mut self.cake {
-            *elapsed += dt;
+        if let Some(party) = &mut self.party {
+            party.tick(dt);
             return;
         }
         if self.title || self.paused || self.confirm.is_some() {
@@ -236,9 +249,13 @@ impl App {
         self.name.as_deref()
     }
 
-    /// 彩蛋动画已经播放的时间。
-    pub fn cake(&self) -> Option<Duration> {
-        self.cake
+    pub fn age(&self) -> Option<u8> {
+        self.age
+    }
+
+    /// 彩蛋的播放进度。
+    pub fn party(&self) -> Option<&Party> {
+        self.party.as_ref()
     }
 
     pub fn on_title(&self) -> bool {
@@ -261,6 +278,7 @@ impl App {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::party::{INTRO, Stage};
 
     const SECOND: Duration = Duration::from_secs(1);
 
@@ -306,34 +324,43 @@ pub(crate) mod tests {
     fn easter_egg_plays_on_title_until_dismissed() {
         let mut app = App::new(1);
         app.handle(Command::EasterEgg);
-        app.tick(SECOND);
-        assert_eq!(app.cake(), Some(SECOND));
-        // 播放期间其它命令无效
+        app.tick(INTRO + SECOND);
+        assert_eq!(app.party().map(Party::stage), Some(Stage::Lit(SECOND)));
+        // 播放期间游戏命令无效
         app.handle(Command::Game(Action::HardDrop));
         app.handle(Command::Quit);
         assert!(app.on_title());
         assert!(!app.should_quit());
 
+        app.handle(Command::Blow);
+        assert!(matches!(
+            app.party().map(Party::stage),
+            Some(Stage::Blown(_))
+        ));
+
         app.handle(Command::Dismiss);
-        assert_eq!(app.cake(), None);
+        assert!(app.party().is_none());
         assert!(app.on_title());
     }
 
     #[test]
-    fn name_is_cleaned_and_survives_restart() {
+    fn name_and_age_are_cleaned_and_survive_restart() {
         assert_eq!(App::new(1).with_name("  \t ").name(), None);
-        let mut app = playing(1).with_name(" 小明\n ");
+        assert_eq!(App::new(1).with_age(0).age(), None);
+        assert_eq!(App::new(1).with_age(100).age(), None);
+        let mut app = playing(1).with_name(" 小明\n ").with_age(51);
         assert_eq!(app.name(), Some("小明"));
         app.handle(Command::Restart);
         app.handle(Command::Answer(true));
         assert_eq!(app.name(), Some("小明"));
+        assert_eq!(app.age(), Some(51));
     }
 
     #[test]
     fn easter_egg_only_on_title() {
         let mut app = playing(1);
         app.handle(Command::EasterEgg);
-        assert_eq!(app.cake(), None);
+        assert!(app.party().is_none());
     }
 
     #[test]

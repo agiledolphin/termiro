@@ -5,6 +5,7 @@ mod audio;
 mod config;
 mod input;
 mod keymap;
+mod party;
 mod platform;
 mod render;
 mod storage;
@@ -104,7 +105,8 @@ fn run(
 ) -> io::Result<()> {
     let mut app = App::new(seed_from_clock())
         .with_best(storage::load())
-        .with_name(&birthday.name);
+        .with_name(&birthday.name)
+        .with_age(birthday.age);
     let mut music = Music::default();
     let mut next_tick = Instant::now() + TICK;
 
@@ -116,8 +118,8 @@ fn run(
             loop {
                 match event::read()? {
                     Event::Key(key) => {
-                        let command = if app.cake().is_some() {
-                            input.dismiss_key(key)
+                        let command = if app.party().is_some() {
+                            input.party_key(key)
                         } else if app.confirming().is_some() {
                             input.confirm_key(key)
                         } else {
@@ -132,7 +134,7 @@ fn run(
                     {
                         let size = terminal.size()?;
                         let area = Rect::new(0, 0, size.width, size.height);
-                        if app.cake().is_some() {
+                        if app.party().is_some() {
                             app.handle(Command::Dismiss);
                         } else if render::logo_hit(area, mouse.column, mouse.row) {
                             app.handle(Command::EasterEgg);
@@ -163,7 +165,7 @@ fn run(
             next_tick += TICK;
         }
         save_record(&mut app);
-        music.follow(app.cake().is_some() && birthday.sound);
+        music.follow(birthday.sound && app.party().is_some_and(|party| party.music_wanted()));
     }
     // 退出时放弃的那一局也可能破了纪录
     save_record(&mut app);

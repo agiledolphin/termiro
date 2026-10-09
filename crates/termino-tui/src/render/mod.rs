@@ -8,8 +8,6 @@ mod logo;
 mod panel;
 mod theme;
 
-use std::time::Duration;
-
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Stylize};
@@ -24,6 +22,7 @@ pub use self::theme::Theme;
 use crate::app::{App, Confirm};
 use crate::input::Input;
 use crate::keymap::{Command, Keymap};
+use crate::party::Stage;
 
 const MIN_WIDTH: u16 = panel::WIDTH + 1 + board::WIDTH + 1 + panel::WIDTH;
 const MIN_HEIGHT: u16 = board::HEIGHT;
@@ -48,8 +47,8 @@ pub fn draw(frame: &mut Frame, app: &App, input: &Input, theme: &Theme) {
         return;
     }
 
-    if let Some(elapsed) = app.cake() {
-        draw_cake(frame, area, app, elapsed, theme);
+    if let Some(party) = app.party() {
+        draw_cake(frame, area, app, party.stage(), theme);
         return;
     }
     if app.on_title() {
@@ -220,42 +219,42 @@ fn draw_title(frame: &mut Frame, area: Rect, app: &App, keys: &Keymap, theme: &T
     );
 }
 
-/// 彩蛋：生日蛋糕、彩虹色的祝福，以及关闭提示。名字写在蛋糕上，太长时改放在祝福语下方。
-fn draw_cake(frame: &mut Frame, area: Rect, app: &App, elapsed: Duration, theme: &Theme) {
-    let n = cake::frame_at(elapsed);
+/// 彩蛋：生日蛋糕、彩虹色的祝福，以及按键提示。名字写在蛋糕上，太长时改放在祝福语下方。
+/// 终端高度够时在各部分之间留空行。
+fn draw_cake(frame: &mut Frame, area: Rect, app: &App, stage: Stage, theme: &Theme) {
     let name = app.name();
     let name_below = name.filter(|name| cake::name_label(name).is_none());
-    let block = centered(area, cake::WIDTH, cake::HEIGHT + 5);
-    let [art, _, greeting, below, _, hint] = Layout::vertical([
+    let text_rows = 2 + u16::from(name_below.is_some());
+    let gap = u16::from(area.height >= cake::HEIGHT + text_rows + 2);
+    let block = centered(area, area.width, cake::HEIGHT + text_rows + 2 * gap);
+    let [art, _, greeting, below, _, hint_row] = Layout::vertical([
         Constraint::Length(cake::HEIGHT),
+        Constraint::Length(gap),
         Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(u16::from(name_below.is_some())),
+        Constraint::Length(gap),
         Constraint::Length(1),
     ])
     .areas(block);
-    frame.render_widget(
-        cake::Cake {
-            frame: n,
-            theme,
-            name,
-        },
-        art,
-    );
-    frame.render_widget(cake::greeting(n, theme).centered(), greeting);
-    if let Some(name) = name_below {
-        let line = Line::from(format!("~ {name} ~").bold()).centered();
-        frame.render_widget(
-            line,
-            Rect {
-                width: area.width,
-                x: area.x,
-                ..below
-            },
-        );
+    let cake = cake::Cake {
+        stage,
+        theme,
+        name,
+        age: app.age(),
+    };
+    frame.render_widget(cake, centered(art, cake::WIDTH, cake::HEIGHT));
+    if let Some(line) = cake::greeting(stage, theme) {
+        frame.render_widget(line.centered(), greeting);
     }
-    frame.render_widget(Line::from("press any key".dim()).centered(), hint);
+    if let (Some(name), Stage::Lit(_) | Stage::Blown(_)) = (name_below, stage) {
+        frame.render_widget(Line::from(format!("~ {name} ~").bold()).centered(), below);
+    }
+    let hint = match stage {
+        Stage::Stacking(_) => "Space  skip      Esc  close",
+        Stage::Lit(_) => "Space  blow out the candles      Esc  close",
+        Stage::Blown(_) => "Space  light again      Esc  close",
+    };
+    frame.render_widget(Line::from(hint.dim()).centered(), hint_row);
 }
 
 /// 按键提示，过长时截断以免挤乱布局。
@@ -306,6 +305,8 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use insta::assert_snapshot;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -315,6 +316,7 @@ mod tests {
     use super::*;
     use crate::app::tests::playing as started;
     use crate::config::Timing;
+    use crate::party::INTRO;
     use crate::platform::ColorDepth;
     use crate::storage::Record;
 
@@ -450,18 +452,40 @@ mod tests {
         assert!(!logo_hit(Rect::new(0, 0, 30, 10), 15, 5));
     }
 
-    #[test]
-    fn birthday_cake() {
-        let mut app = App::new(7).with_name("Ada");
+    /// 打开彩蛋并播放到指定阶段。
+    fn party(name: &str, age: u32, at: Duration, blow: bool) -> App {
+        let mut app = App::new(7).with_name(name).with_age(age);
         app.handle(Command::EasterEgg);
+        if blow {
+            app.tick(INTRO);
+            app.handle(Command::Blow);
+        }
+        app.tick(at);
+        app
+    }
+
+    #[test]
+    fn birthday_cake_stacking() {
+        let app = party("Ada", 51, Duration::from_millis(1200), false);
         assert_snapshot!(render_with(&app, 80, 24, &PLAIN));
     }
 
     #[test]
-    fn birthday_cake_with_long_name() {
-        let mut app = App::new(7).with_name(&"Bartholomew".repeat(3));
-        app.handle(Command::EasterEgg);
+    fn birthday_cake() {
+        let app = party("Ada", 51, INTRO, false);
         assert_snapshot!(render_with(&app, 80, 24, &PLAIN));
+    }
+
+    #[test]
+    fn birthday_cake_blown() {
+        let app = party("Ada", 51, Duration::from_millis(1350), true);
+        assert_snapshot!(render_with(&app, 80, 24, &PLAIN));
+    }
+
+    #[test]
+    fn birthday_cake_with_long_name_on_small_terminal() {
+        let app = party(&"Bartholomew".repeat(3), 0, INTRO, false);
+        assert_snapshot!(render_with(&app, MIN_WIDTH, MIN_HEIGHT, &PLAIN));
     }
 
     #[test]
