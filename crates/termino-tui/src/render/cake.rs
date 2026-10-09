@@ -65,7 +65,7 @@ const BOTTOM_TIER_LEFT: u16 = 1;
 const BOTTOM_TIER_WIDTH: u16 = 34;
 const NAME_MAX_WIDTH: usize = BOTTOM_TIER_WIDTH as usize - 2;
 
-/// 数字蜡烛的 3×5 像素字，每个像素占 2 列；两根之间空 2 列。
+/// 数字蜡烛的 3×5 像素字，每个像素占 1 列，像细长的数字蜡烛；两根之间空 2 列。
 const DIGITS: [[&str; 5]; 10] = [
     ["###", "#.#", "#.#", "#.#", "###"],
     [".#.", "##.", ".#.", ".#.", "###"],
@@ -78,10 +78,17 @@ const DIGITS: [[&str; 5]; 10] = [
     ["###", "#.#", "###", "#.#", "###"],
     ["###", "#.#", "###", "..#", "###"],
 ];
-const DIGIT_WIDTH: u16 = 6;
+const DIGIT_WIDTH: u16 = 3;
 const DIGIT_GAP: u16 = 2;
 
-/// 烛焰的四种形态，依次循环，看起来在左右摇曳。
+/// 数字蜡烛上一列宽的小火苗，四种形态依次循环，看起来在跳动。
+const SMALL_FLAMES: [(char, Color); 4] = [
+    ('^', Color::Yellow),
+    ('*', Color::LightYellow),
+    ('^', Color::LightRed),
+    ('\'', Color::Yellow),
+];
+/// 普通蜡烛上两列宽的烛焰，四种形态依次循环，看起来在左右摇曳。
 const FLAMES: [(&str, Color); 4] = [
     ("/\\", Color::Yellow),
     ("/)", Color::LightYellow),
@@ -167,8 +174,10 @@ pub fn greeting(stage: Stage, theme: &Theme) -> Option<Line<'static>> {
 /// 蜡烛的格子和烛焰位置。x 是蛋糕内的列，y 是画面行。
 struct Candles {
     cells: Vec<(u16, u16, CandleCell)>,
-    /// 每簇烛焰左半边的位置，烛焰占两列。
+    /// 每簇烛焰的位置；两列宽的烛焰是左半边的位置。
     flames: Vec<(u16, u16)>,
+    /// 数字蜡烛用一列宽的小火苗。
+    small_flames: bool,
     top: u16,
 }
 
@@ -199,16 +208,19 @@ impl Candles {
                     for (dy, row) in DIGITS[digit].iter().enumerate() {
                         for (dx, pixel) in row.chars().enumerate() {
                             if pixel == '#' {
-                                let x = left + dx as u16 * 2;
-                                cells.push((x, top + dy as u16, CandleCell::Digit));
-                                cells.push((x + 1, top + dy as u16, CandleCell::Digit));
+                                cells.push((left + dx as u16, top + dy as u16, CandleCell::Digit));
                             }
                         }
                     }
-                    flames.push((left + DIGIT_WIDTH / 2 - 1, top - 1));
+                    flames.push((left + DIGIT_WIDTH / 2, top - 1));
                     left += DIGIT_WIDTH + DIGIT_GAP;
                 }
-                Self { cells, flames, top }
+                Self {
+                    cells,
+                    flames,
+                    small_flames: true,
+                    top,
+                }
             }
             None => {
                 let center = CAKE_WIDTH / 2 - 1;
@@ -221,6 +233,7 @@ impl Candles {
                 Self {
                     cells,
                     flames,
+                    small_flames: false,
                     top: bottom - 1,
                 }
             }
@@ -376,8 +389,14 @@ impl Cake<'_> {
             match self.stage {
                 Stage::Stacking(_) if ms < LIGHT_MS + i as u64 * LIGHT_STEP_MS => {}
                 Stage::Stacking(_) | Stage::Lit(_) => {
-                    let (shape, color) = FLAMES[(frame as usize + i) % FLAMES.len()];
-                    canvas.text(x as u16, y, shape, self.theme.fg(color).bold());
+                    let step = frame as usize + i;
+                    if candles.small_flames {
+                        let (symbol, color) = SMALL_FLAMES[step % SMALL_FLAMES.len()];
+                        canvas.put(x, y, symbol, self.theme.fg(color).bold());
+                    } else {
+                        let (shape, color) = FLAMES[step % FLAMES.len()];
+                        canvas.text(x as u16, y, shape, self.theme.fg(color).bold());
+                    }
                 }
                 Stage::Blown(t) => {
                     // 一缕青烟左右摆动着往上飘，几帧后散去
@@ -571,6 +590,15 @@ mod tests {
         assert_eq!(before, after, "{}", row.concat());
     }
 
+    /// 点着的烛焰数：数字蜡烛的火苗位置上是火苗字符。
+    fn lit_flames(buf: &Buffer, age: Option<u8>) -> usize {
+        Candles::new(age)
+            .flames
+            .iter()
+            .filter(|&&(x, y)| ["^", "*", "'", "/", "("].contains(&buf[(MARGIN + x, y)].symbol()))
+            .count()
+    }
+
     #[test]
     fn age_becomes_digit_candles() {
         let pixels = |digit: usize| {
@@ -578,16 +606,18 @@ mod tests {
                 .iter()
                 .map(|row| row.matches('#').count())
                 .sum::<usize>()
-                * 2
         };
         let buf = render(Stage::Lit(ms(0)), ColorDepth::None, None, Some(51));
         assert_eq!(count(&buf, "@"), pixels(5) + pixels(1));
-        // 两根数字蜡烛各有一簇烛焰
-        assert_eq!(count(&buf, "/"), 2);
+        // 两根数字蜡烛各有一簇火苗，左右对称地排在中间
+        assert_eq!(lit_flames(&buf, Some(51)), 2);
+        let flames = Candles::new(Some(51)).flames;
+        assert_eq!(flames[0].0 + flames[1].0 + 1, CAKE_WIDTH);
         // 没有年龄时是一根普通蜡烛
         let plain = render(Stage::Lit(ms(0)), ColorDepth::None, None, None);
         assert_eq!(count(&plain, "@"), 0);
         assert_eq!(count(&plain, "|"), 4);
+        assert_eq!(lit_flames(&plain, None), 1);
     }
 
     #[test]
@@ -603,10 +633,10 @@ mod tests {
         // 蛋糕都落好、蜡烛还没点
         let stacked = stage(LIGHT_MS - 1);
         assert!(count(&stacked, "#") > 0 && count(&stacked, "@") > 0);
-        assert_eq!(count(&stacked, "/"), 0);
+        assert_eq!(lit_flames(&stacked, Some(51)), 0);
         // 逐一点亮
-        assert_eq!(count(&stage(LIGHT_MS), "/"), 1);
-        assert_eq!(count(&stage(LIGHT_MS + LIGHT_STEP_MS), "/"), 2);
+        assert_eq!(lit_flames(&stage(LIGHT_MS), Some(51)), 1);
+        assert_eq!(lit_flames(&stage(LIGHT_MS + LIGHT_STEP_MS), Some(51)), 2);
     }
 
     #[test]
@@ -646,7 +676,13 @@ mod tests {
     fn blowing_out_makes_smoke_then_fireworks() {
         let blown = |t| render(Stage::Blown(t), ColorDepth::None, None, Some(51));
         let smoke = blown(FRAME_TIME * 2);
-        assert_eq!(count(&smoke, "/"), 0, "吹灭后不再有烛焰");
+        let flames = Candles::new(Some(51)).flames;
+        assert!(
+            flames
+                .iter()
+                .all(|&(x, y)| !["^", "*", "'"].contains(&smoke[(MARGIN + x, y)].symbol())),
+            "吹灭后不再有火苗"
+        );
         assert!(count(&smoke, "(") + count(&smoke, ")") > 0);
         // 烟散了以后放烟花：第一朵在第 0 帧绽放，中心是 `*`
         let fireworks = blown(FIREWORKS_DELAY);
